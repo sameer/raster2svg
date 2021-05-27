@@ -1,0 +1,25 @@
+[package]
+name = "raster2svg"
+version = "0.1.0"
+authors = ["Sameer Puri <sameer@users.noreply.github.com>"]
+edition = "2018"
+description = "Convert raster graphics to stylish SVGs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cairo-rs = { version = "^0", features = ["svg", "v1_16"] }
+image = { version = "0.23", features = ["jpeg", "png", "tiff", "bmp"] }
+structopt = "0.3"
+log = "0"
+env_logger = "0"
+paste = "1"
+uom = "0.31"
+ndarray = { version = "0.15", features = ["approx"] }
+ndarray-stats = "0.5.0"
+rand = { version = "0.8", features = ["alloc"] }
+spade = "1.8"
+fxhash = "0.2"
+
+[dev-dependencies]
+pretty_assertions = "0.7"
