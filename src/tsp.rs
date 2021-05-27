@@ -18,18 +18,76 @@ pub fn approximate_tsp_with_mst(
     });
     // let mut path = tree.to_owned();
     loop {
-        if let Some((branch, disconnected_node)) = adjacency_map
+        dbg!(adjacency_map
             .iter()
-            .map(|(vertex, edges)| (*vertex, edges.clone()))
             .filter(|(_, vertex_edges)| vertex_edges.len() >= 3)
-            .map(|(branch, adjacencies)| {
-                adjacencies
-                    .iter()
-                    .map(move |adjacency| (branch, *adjacency))
-                    .collect::<Vec<_>>()
-            })
-            .flatten()
-            .max_by_key(|(vertex, adjacency)| abs_distance_squared(*vertex, *adjacency))
+            .count());
+        if let Some((branch, disconnected_node, branch_tree_leaf, disconnected_tree_leaf)) =
+            adjacency_map
+                .iter()
+                .filter(|(_, vertex_edges)| vertex_edges.len() >= 3)
+                .map(|(branch, adjacencies)| {
+                    adjacencies.iter().map(move |adjacency| (branch, adjacency))
+                })
+                .flatten()
+                .map(|(branch, disconnected_node)| {
+                    // Now there are (in theory) two disconnected trees
+                    // Find the two connected trees in the graph
+                    let mut branch_tree_visited: HashMap<[i64; 2], bool> =
+                        vertices.iter().map(|v| (*v, false)).collect();
+                    *branch_tree_visited.get_mut(branch).unwrap() = true;
+                    let mut branch_dfs = vec![branch];
+                    while let Some(head) = branch_dfs.pop() {
+                        for adjacency in adjacency_map.get(head).unwrap() {
+                            // Explicitly skip this node to not enter the other connected component
+                            if adjacency == disconnected_node {
+                                continue;
+                            } else if !branch_tree_visited.get(adjacency).unwrap() {
+                                *branch_tree_visited.get_mut(adjacency).unwrap() = true;
+                                branch_dfs.push(adjacency);
+                            }
+                        }
+                    }
+
+                    // Find leaves in the two
+                    // Pick the shortest possible link between two leaves that would reconnect the trees
+                    let disconnected_tree_leaves = branch_tree_visited
+                        .iter()
+                        .filter_map(|(k, v)| if *v { None } else { Some(*k) })
+                        .filter(|disconnected_tree_vertex| {
+                            adjacency_map.get(disconnected_tree_vertex).unwrap().len() <= 1
+                        })
+                        .collect::<Vec<_>>();
+
+                    let (branch_tree_leaf, disconnected_tree_leaf) = branch_tree_visited
+                        .iter()
+                        .filter_map(|(k, v)| if *v { Some(*k) } else { None })
+                        .filter(|branch_tree_vertex| {
+                            adjacency_map.get(branch_tree_vertex).unwrap().len() <= 1
+                        })
+                        .map(|branch_tree_leaf| {
+                            disconnected_tree_leaves
+                                .iter()
+                                .map(move |disconnected_tree_leaf| {
+                                    (branch_tree_leaf, disconnected_tree_leaf)
+                                })
+                        })
+                        .flatten()
+                        .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
+                            abs_distance_squared(*branch_tree_leaf, **disconnected_tree_leaf)
+                        })
+                        .unwrap();
+
+                    (
+                        *branch,
+                        *disconnected_node,
+                        branch_tree_leaf,
+                        *disconnected_tree_leaf,
+                    )
+                })
+                .min_by_key(|(_, _, branch_tree_leaf, disconnected_tree_leaf)| {
+                    abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
+                })
         {
             // Remove edge
             adjacency_map
@@ -41,82 +99,13 @@ pub fn approximate_tsp_with_mst(
                 .unwrap()
                 .retain(|adjacency| *adjacency != branch);
 
-            // Now there are two disconnected trees
-
-            // Determine membership
-            let mut branch_tree_visited: HashMap<[i64; 2], bool> =
-                vertices.iter().map(|v| (*v, false)).collect();
-            *branch_tree_visited.get_mut(&branch).unwrap() = true;
-            let mut branch_dfs = vec![branch];
-            while let Some(head) = branch_dfs.pop() {
-                for adjacency in adjacency_map.get(&head).unwrap() {
-                    if !branch_tree_visited.get(adjacency).unwrap() {
-                        *branch_tree_visited.get_mut(adjacency).unwrap() = true;
-                        branch_dfs.push(*adjacency);
-                    }
-                }
-            }
-
-            // Find leaves in the two
-            // Pick the shortest possible link between two leaves that would reconnect them
-            let mut branch_tree_leaves = branch_tree_visited
-                .iter()
-                .filter_map(|(k, v)| if *v { Some(*k) } else { None })
-                .filter(|branch_tree_vertex| {
-                    adjacency_map.get(branch_tree_vertex).unwrap().len() <= 1
-                })
-                .collect::<Vec<_>>();
-
-            let disconnected_tree_leaves = branch_tree_visited
-                .iter()
-                .filter_map(|(k, v)| if *v { None } else { Some(*k) })
-                .filter(|disconnected_tree_vertex| {
-                    adjacency_map.get(disconnected_tree_vertex).unwrap().len() <= 1
-                })
-                .collect::<Vec<_>>();
-            // if branch_tree_leaves.is_empty() || disconnected_tree_leaves.is_empty() {
-            //     println!(
-            //         "This should not be possible: {:?} {:?}",
-            //         branch_tree_visited
-            //             .iter()
-            //             .filter_map(|(k, v)| if *v { Some(*k) } else { None })
-            //             .collect::<Vec<_>>(),
-            //         branch_tree_visited
-            //             .iter()
-            //             .filter_map(|(k, v)| if *v { None } else { Some(*k) })
-            //             .collect::<Vec<_>>(),
-            //     );
-            // }
-            // println!("disconnect: {:?}", [branch, disconnected_node]);
-            // println!("v: {:?} t: {:?}", &vertices, &tree);
-
-            let (branch_tree_leaf, disconnected_tree_leaf) = branch_tree_leaves
-                .drain(..)
-                .map(|branch_tree_leaf| {
-                    disconnected_tree_leaves
-                        .iter()
-                        .map(move |disconnected_tree_leaf| {
-                            (branch_tree_leaf, disconnected_tree_leaf)
-                        })
-                })
-                .flatten()
-                .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
-                    abs_distance_squared(*branch_tree_leaf, **disconnected_tree_leaf)
-                })
-                .unwrap();
-            // let (edge_idx, _) = path
-            //     .iter()
-            //     .enumerate()
-            //     .find(|(_, path_edge)| path_edge == long_edge)
-            //     .unwrap();
-
-            // pick a leaf edge for the node being disconnected
+            // Connect leaves
             adjacency_map
                 .get_mut(&branch_tree_leaf)
                 .unwrap()
-                .push(*disconnected_tree_leaf);
+                .push(disconnected_tree_leaf);
             adjacency_map
-                .get_mut(disconnected_tree_leaf)
+                .get_mut(&disconnected_tree_leaf)
                 .unwrap()
                 .push(branch_tree_leaf);
         } else {
