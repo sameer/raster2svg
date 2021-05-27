@@ -37,7 +37,6 @@ pub fn compute_mst(
         edges_by_vertex.entry(from.clone()).or_default().push(edge);
         edges_by_vertex.entry(to.clone()).or_default().push(edge);
     });
-    let edges = delaunay.edges().collect::<Vec<_>>();
 
     let mut in_mst: HashSet<[i64; 2]> = HashSet::default();
     let mut edge_priority_queue = BinaryHeap::new();

@@ -275,12 +275,5 @@ fn main() -> io::Result<()> {
 }
 
 pub fn abs_distance_squared(a: [i64; 2], b: [i64; 2]) -> i64 {
-    fn abs_difference<T: std::ops::Sub<Output = T> + Ord>(x: T, y: T) -> T {
-        if x < y {
-            y - x
-        } else {
-            x - y
-        }
-    }
-    abs_difference(a[0], b[0]).pow(2) + abs_difference(a[1], b[1]).pow(2)
+    (a[0] - b[0]).pow(2) + (a[1] - b[1]).pow(2)
 }

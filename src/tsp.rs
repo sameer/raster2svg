@@ -1,7 +1,6 @@
+use crate::abs_distance_squared;
 use fxhash::FxHashMap as HashMap;
 
-use crate::abs_distance_squared;
-use log::debug;
 /// Approximate a TSP solution by way of all-pairs branch elimination
 /// http://cs.uef.fi/sipu/pub/applsci-11-00177.pdf
 pub fn approximate_tsp_with_mst(
@@ -16,7 +15,12 @@ pub fn approximate_tsp_with_mst(
         adjacency_map.entry(edge[0]).or_default().push(edge[1]);
         adjacency_map.entry(edge[1]).or_default().push(edge[0]);
     });
-    // let mut path = tree.to_owned();
+    let vertex_to_index = vertices
+        .iter()
+        .enumerate()
+        .map(|(i, vertex)| (*vertex, i))
+        .collect::<HashMap<_, _>>();
+
     loop {
         dbg!(adjacency_map
             .iter()
@@ -33,17 +37,17 @@ pub fn approximate_tsp_with_mst(
                 .map(|(branch, disconnected_node)| {
                     // Now there are (in theory) two disconnected trees
                     // Find the two connected trees in the graph
-                    let mut branch_tree_visited: HashMap<[i64; 2], bool> =
-                        vertices.iter().map(|v| (*v, false)).collect();
-                    *branch_tree_visited.get_mut(branch).unwrap() = true;
+                    let mut branch_tree_visited: Vec<bool> = vec![false; vertices.len()];
+                    branch_tree_visited[*vertex_to_index.get(branch).unwrap()] = true;
                     let mut branch_dfs = vec![branch];
                     while let Some(head) = branch_dfs.pop() {
                         for adjacency in adjacency_map.get(head).unwrap() {
+                            let adjacency_idx = *vertex_to_index.get(adjacency).unwrap();
                             // Explicitly skip this node to not enter the other connected component
                             if adjacency == disconnected_node {
                                 continue;
-                            } else if !branch_tree_visited.get(adjacency).unwrap() {
-                                *branch_tree_visited.get_mut(adjacency).unwrap() = true;
+                            } else if !branch_tree_visited[adjacency_idx] {
+                                branch_tree_visited[adjacency_idx] = true;
                                 branch_dfs.push(adjacency);
                             }
                         }
@@ -53,7 +57,8 @@ pub fn approximate_tsp_with_mst(
                     // Pick the shortest possible link between two leaves that would reconnect the trees
                     let disconnected_tree_leaves = branch_tree_visited
                         .iter()
-                        .filter_map(|(k, v)| if *v { None } else { Some(*k) })
+                        .enumerate()
+                        .filter_map(|(i, v)| if *v { None } else { Some(vertices[i]) })
                         .filter(|disconnected_tree_vertex| {
                             adjacency_map.get(disconnected_tree_vertex).unwrap().len() <= 1
                         })
@@ -61,7 +66,8 @@ pub fn approximate_tsp_with_mst(
 
                     let (branch_tree_leaf, disconnected_tree_leaf) = branch_tree_visited
                         .iter()
-                        .filter_map(|(k, v)| if *v { Some(*k) } else { None })
+                        .enumerate()
+                        .filter_map(|(i, v)| if *v { Some(vertices[i]) } else { None })
                         .filter(|branch_tree_vertex| {
                             adjacency_map.get(branch_tree_vertex).unwrap().len() <= 1
                         })
