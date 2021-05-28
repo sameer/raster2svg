@@ -3,6 +3,7 @@ use image::io::Reader as ImageReader;
 use log::*;
 use ndarray::prelude::*;
 
+use fxhash::FxHashMap as HashMap;
 use rand::prelude::*;
 use spade::delaunay::IntDelaunayTriangulation;
 use std::{
@@ -151,7 +152,7 @@ fn main() -> io::Result<()> {
     let mut rng = thread_rng();
     // Do green last so it appears on top of the SVG
     for k in [0, 2, 1].iter().copied() {
-        let mut voronoi_vertices = {
+        let mut voronoi_points = {
             let mut indices = dither
                 .slice(s![k, .., ..])
                 .indexed_iter()
@@ -166,21 +167,25 @@ fn main() -> io::Result<()> {
             indices.shuffle(&mut rng);
             indices.truncate(indices.len().min(20000));
             indices
-            // let width = Uniform::new(0, image.shape()[1]);
-            // let height = Uniform::new(0, image.shape()[2]);
-            // (0..10000)
-            //     .map(|_| (rng.sample(width), rng.sample(height)))
-            //     .collect::<Vec<_>>()
         };
 
-        let mut point_assignments;
+        let mut colored_pixels;
 
         loop {
             debug!("Naive voronoi");
-            point_assignments =
-                voronoi::compute_voronoi(&voronoi_vertices, image.shape()[1], image.shape()[2]);
+            colored_pixels =
+                voronoi::compute_voronoi(&voronoi_points, image.shape()[1], image.shape()[2]);
 
             debug!("Lloyd's algorithm");
+            let expected_assignment_capacity = image.shape()[1] * image.shape()[2] / voronoi_points.len();
+            let mut point_assignments =
+                vec![Vec::<[i64; 2]>::with_capacity(expected_assignment_capacity); voronoi_points.len()];
+            for i in 0..image.shape()[1] as usize {
+                for j in 0..image.shape()[2] as usize {
+                    point_assignments[colored_pixels[j][i]].push([i as i64, j as i64]);
+                }
+            }
+
             let centroids: Vec<[i64; 2]> = point_assignments
                 .iter()
                 .map(|point_assignment| {
@@ -203,14 +208,14 @@ fn main() -> io::Result<()> {
 
             debug!("Check stopping condition");
             // stopping condition: average distance moved by all stippling points is small
-            let distance_sum = voronoi_vertices
+            let distance_sum = voronoi_points
                 .iter()
                 .zip(centroids.iter())
                 .map(|(voronoi, centroid)| abs_distance_squared(*voronoi, *centroid))
                 .map(|distance_squared| (distance_squared as f64).sqrt())
                 .sum::<f64>();
-            voronoi_vertices = centroids;
-            let average_distance = distance_sum / voronoi_vertices.len() as f64;
+            voronoi_points = centroids;
+            let average_distance = distance_sum / voronoi_points.len() as f64;
             debug!("at {}", average_distance);
             if average_distance <= 0.0001 {
                 break;
@@ -218,12 +223,12 @@ fn main() -> io::Result<()> {
         }
 
         let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
-        for vertex in &voronoi_vertices {
+        for vertex in &voronoi_points {
             delaunay.insert(*vertex);
         }
 
-        let tree = crate::mst::compute_mst(&voronoi_vertices, &delaunay);
-        let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_vertices, &tree);
+        let tree = crate::mst::compute_mst(&voronoi_points, &delaunay);
+        let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_points, &tree);
         debug!("Draw to svg");
 
         if k == 0 {
@@ -233,39 +238,13 @@ fn main() -> io::Result<()> {
         } else if k == 2 {
             ctx.set_source_rgb(0., 0., 1.);
         }
-        // if k == 1 {
-        // for face in delaunay.triangles() {
-        //     let triangle = face.as_triangle();
-        //     ctx.move_to(triangle[0][0] as f64, triangle[0][1] as f64);
-        //     ctx.line_to(triangle[1][0] as f64, triangle[1][1] as f64);
-        //     ctx.line_to(triangle[2][0] as f64, triangle[2][1] as f64);
-        //     ctx.stroke();
-        // }
+
         ctx.move_to(tsp[0][0][0] as f64, tsp[0][0][1] as f64);
         for edge in &tsp {
             ctx.line_to(edge[1][0] as f64, edge[1][1] as f64);
         }
         ctx.stroke();
-        // }
-        // if let Some(edge) = path.first() {
-        //     ctx.move_to(
-        //         voronoi_vertices[edge.0].0 as f64,
-        //         voronoi_vertices[edge.0].1 as f64,
-        //     );
-        // }
-        // for edge in path {
-        //     let vertex = voronoi_vertices[edge.1];
-        //     ctx.line_to(vertex.0 as f64, vertex.1 as f64);
-        // }
-        // ctx.stroke();
     }
-    // let out = ImageBuffer::from_fn(image.shape()[1] as u32, image.shape()[2] as u32, |x, y| {
-    //     let x = x as usize;
-    //     let y = y as usize;
-    //     Rgb([dither[[0, x, y]], dither[[1, x, y]], dither[[2, x, y]]])
-    // });
-    // out.save_with_format("out.png", image::ImageFormat::Png)
-    //     .unwrap();
 
     Ok(())
 }
