@@ -1,5 +1,5 @@
 use cairo::Context;
-use image::{io::Reader as ImageReader, ImageBuffer, Pixel, Rgb};
+use image::io::Reader as ImageReader;
 use log::*;
 use ndarray::prelude::*;
 
@@ -149,7 +149,8 @@ fn main() -> io::Result<()> {
     );
 
     let mut rng = thread_rng();
-    for k in 0..3 {
+    // Do green last so it appears on top of the SVG
+    for k in [0, 2, 1].iter().copied() {
         let mut voronoi_vertices = {
             let mut indices = dither
                 .slice(s![k, .., ..])
@@ -163,7 +164,7 @@ fn main() -> io::Result<()> {
                 })
                 .collect::<Vec<_>>();
             indices.shuffle(&mut rng);
-            indices.truncate(indices.len().min(10000));
+            indices.truncate(indices.len().min(20000));
             indices
             // let width = Uniform::new(0, image.shape()[1]);
             // let height = Uniform::new(0, image.shape()[2]);
@@ -171,63 +172,50 @@ fn main() -> io::Result<()> {
             //     .map(|_| (rng.sample(width), rng.sample(height)))
             //     .collect::<Vec<_>>()
         };
-        // let mut point_assignments;
 
-        // loop {
-        // debug!("Naive voronoi");
-        // point_assignments =
-        //     voronoi::compute_voronoi(&voronoi_vertices, image.shape()[1], image.shape()[2]);
+        let mut point_assignments;
 
-        // break;
-        // debug!("Lloyd's algorithm");
-        // let centroids: Vec<(usize, usize)> = point_assignments
-        //     .iter()
-        //     .map(|point_assignment| {
-        //         let denominator = point_assignment.iter().fold(0., |mut acc, (x, y)| {
-        //             acc += image[[k, *x, *y]] as f64 / 255.;
-        //             acc
-        //         });
-        //         let numerator_y = point_assignment.iter().fold(0., |mut acc, (x, y)| {
-        //             acc += *y as f64 * image[[k, *x, *y]] as f64 / 255.;
-        //             acc
-        //         });
-        //         let numerator_x = point_assignment.iter().fold(0., |mut acc, (x, y)| {
-        //             acc += *x as f64 * (image[[k, *x, *y]] as f64 / 255.);
-        //             acc
-        //         });
-        //         (numerator_x / denominator, numerator_y / denominator)
-        //     })
-        //     .map(|(x, y)| (x.round() as usize, y.round() as usize))
-        //     .collect();
+        loop {
+            debug!("Naive voronoi");
+            point_assignments =
+                voronoi::compute_voronoi(&voronoi_vertices, image.shape()[1], image.shape()[2]);
 
-        // debug!("Check stopping condition");
-        // // stopping condition: average distance moved by all stippling points is small
-        // let distance = voronoi_vertices
-        //     .iter()
-        //     .zip(centroids.iter())
-        //     .map(|(voronoi, centroid)| abs_distance_squared(*voronoi, *centroid))
-        //     .fold(0, |acc, dist| acc + dist);
-        // voronoi_vertices = centroids;
-        // let average_distance = (distance as f64).sqrt() / voronoi_vertices.len() as f64;
-        // debug!("at {}", average_distance);
-        // if average_distance <= 0.0001 {
-        //     debug!("done with color channel {}", k);
-        //     break;
-        // }
-        // }
+            debug!("Lloyd's algorithm");
+            let centroids: Vec<[i64; 2]> = point_assignments
+                .iter()
+                .map(|point_assignment| {
+                    let denominator = point_assignment.iter().fold(0., |mut acc, [x, y]| {
+                        acc += image[[k, *x as usize, *y as usize]] as f64 / 255.;
+                        acc
+                    });
+                    let numerator_y = point_assignment.iter().fold(0., |mut acc, [x, y]| {
+                        acc += *y as f64 * image[[k, *x as usize, *y as usize]] as f64 / 255.;
+                        acc
+                    });
+                    let numerator_x = point_assignment.iter().fold(0., |mut acc, [x, y]| {
+                        acc += *x as f64 * (image[[k, *x as usize, *y as usize]] as f64 / 255.);
+                        acc
+                    });
+                    [numerator_x / denominator, numerator_y / denominator]
+                })
+                .map(|[x, y]| [x.round() as i64, y.round() as i64])
+                .collect();
 
-        if k == 0 {
-            ctx.set_source_rgb(1., 0., 0.);
-        } else if k == 1 {
-            ctx.set_source_rgb(0., 1., 0.);
-        } else if k == 2 {
-            ctx.set_source_rgb(0., 0., 1.);
+            debug!("Check stopping condition");
+            // stopping condition: average distance moved by all stippling points is small
+            let distance_sum = voronoi_vertices
+                .iter()
+                .zip(centroids.iter())
+                .map(|(voronoi, centroid)| abs_distance_squared(*voronoi, *centroid))
+                .map(|distance_squared| (distance_squared as f64).sqrt())
+                .sum::<f64>();
+            voronoi_vertices = centroids;
+            let average_distance = distance_sum / voronoi_vertices.len() as f64;
+            debug!("at {}", average_distance);
+            if average_distance <= 0.0001 {
+                break;
+            }
         }
-
-        // let mut visited = vec![false; voronoi_points.len()];
-        // let mut path: Vec<(usize, usize)> = Vec::with_capacity(voronoi_points.len());
-        // debug!("Approximate tsp path");
-        // let path = tsp::approximate_tsp_with_mst(&voronoi_vertices);
 
         let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
         for vertex in &voronoi_vertices {
@@ -237,6 +225,14 @@ fn main() -> io::Result<()> {
         let tree = crate::mst::compute_mst(&voronoi_vertices, &delaunay);
         let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_vertices, &tree);
         debug!("Draw to svg");
+
+        if k == 0 {
+            ctx.set_source_rgb(1., 0., 0.);
+        } else if k == 1 {
+            ctx.set_source_rgb(0., 1., 0.);
+        } else if k == 2 {
+            ctx.set_source_rgb(0., 0., 1.);
+        }
         // if k == 1 {
         // for face in delaunay.triangles() {
         //     let triangle = face.as_triangle();

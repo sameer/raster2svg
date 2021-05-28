@@ -21,6 +21,8 @@ pub fn approximate_tsp_with_mst(
         .map(|(i, vertex)| (*vertex, i))
         .collect::<HashMap<_, _>>();
 
+    // let edge_to_left_vertices =
+
     loop {
         dbg!(adjacency_map
             .iter()
@@ -34,7 +36,7 @@ pub fn approximate_tsp_with_mst(
                     adjacencies.iter().map(move |adjacency| (branch, adjacency))
                 })
                 .flatten()
-                .map(|(branch, disconnected_node)| {
+                .map(|(branch, disconnected_node_candidate)| {
                     // Now there are (in theory) two disconnected trees
                     // Find the two connected trees in the graph
                     let mut branch_tree_visited: Vec<bool> = vec![false; vertices.len()];
@@ -44,7 +46,7 @@ pub fn approximate_tsp_with_mst(
                         for adjacency in adjacency_map.get(head).unwrap() {
                             let adjacency_idx = *vertex_to_index.get(adjacency).unwrap();
                             // Explicitly skip this node to not enter the other connected component
-                            if adjacency == disconnected_node {
+                            if adjacency == disconnected_node_candidate {
                                 continue;
                             } else if !branch_tree_visited[adjacency_idx] {
                                 branch_tree_visited[adjacency_idx] = true;
@@ -86,7 +88,7 @@ pub fn approximate_tsp_with_mst(
 
                     (
                         *branch,
-                        *disconnected_node,
+                        *disconnected_node_candidate,
                         branch_tree_leaf,
                         *disconnected_tree_leaf,
                     )

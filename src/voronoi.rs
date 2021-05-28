@@ -1,5 +1,7 @@
 use crate::abs_distance_squared;
 
+struct VoronoiComponents {}
+
 pub fn compute_voronoi(vertices: &[[i64; 2]], width: usize, height: usize) -> Vec<Vec<[i64; 2]>> {
     if vertices.is_empty() {
         return vec![];
@@ -18,7 +20,7 @@ pub fn compute_voronoi(vertices: &[[i64; 2]], width: usize, height: usize) -> Ve
             .enumerate()
             .min_by_key(|(_, vertex)| abs_distance_squared(point, **vertex))
             .unwrap();
-        point_assignments[closest_vertex_to_point.0].push(*closest_vertex_to_point.1);
+        point_assignments[closest_vertex_to_point.0].push(point);
     }
     point_assignments
 }
