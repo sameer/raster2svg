@@ -2,8 +2,6 @@ use cairo::Context;
 use image::io::Reader as ImageReader;
 use log::*;
 use ndarray::prelude::*;
-
-use fxhash::FxHashMap as HashMap;
 use rand::prelude::*;
 use spade::delaunay::IntDelaunayTriangulation;
 use std::{
@@ -138,7 +136,7 @@ fn main() -> io::Result<()> {
     surf.set_document_unit(cairo::SvgUnit::Mm);
     let ctx = Context::new(&surf);
 
-    ctx.set_source_rgb(0., 0., 0.);
+    ctx.set_source_rgb(1., 1., 1.);
     ctx.rectangle(0., 0., width, height);
     ctx.fill();
 
@@ -170,16 +168,20 @@ fn main() -> io::Result<()> {
         };
 
         let mut colored_pixels;
-
+        let mut last_average_distance: Option<f64> = None;
         loop {
             debug!("Naive voronoi");
             colored_pixels =
                 voronoi::compute_voronoi(&voronoi_points, image.shape()[1], image.shape()[2]);
 
             debug!("Lloyd's algorithm");
-            let expected_assignment_capacity = image.shape()[1] * image.shape()[2] / voronoi_points.len();
+            let expected_assignment_capacity =
+                image.shape()[1] * image.shape()[2] / voronoi_points.len();
             let mut point_assignments =
-                vec![Vec::<[i64; 2]>::with_capacity(expected_assignment_capacity); voronoi_points.len()];
+                vec![
+                    Vec::<[i64; 2]>::with_capacity(expected_assignment_capacity);
+                    voronoi_points.len()
+                ];
             for i in 0..image.shape()[1] as usize {
                 for j in 0..image.shape()[2] as usize {
                     point_assignments[colored_pixels[j][i]].push([i as i64, j as i64]);
@@ -217,9 +219,12 @@ fn main() -> io::Result<()> {
             voronoi_points = centroids;
             let average_distance = distance_sum / voronoi_points.len() as f64;
             debug!("at {}", average_distance);
-            if average_distance <= 0.0001 {
-                break;
+            if let Some(last_average_distance) = last_average_distance {
+                if (last_average_distance - average_distance).abs() <= f64::EPSILON {
+                    break;
+                }
             }
+            last_average_distance = Some(average_distance)
         }
 
         let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
@@ -228,6 +233,13 @@ fn main() -> io::Result<()> {
         }
 
         let tree = crate::mst::compute_mst(&voronoi_points, &delaunay);
+
+        // ctx.move_to(tree[0][0][0] as f64, tree[0][0][1] as f64);
+        // for edge in &tree {
+        //     ctx.move_to(edge[0][0] as f64, edge[0][1] as f64);
+        //     ctx.line_to(edge[1][0] as f64, edge[1][1] as f64);
+        //     ctx.stroke();
+        // }
         let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_points, &tree);
         debug!("Draw to svg");
 
