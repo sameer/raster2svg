@@ -19,8 +19,7 @@ impl PartialOrd for PriorityQueueEdge {
 
 impl Ord for PriorityQueueEdge {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        crate::abs_distance_squared(self.from, self.to)
-            .cmp(&crate::abs_distance_squared(other.from, other.to))
+        self.partial_cmp(other).unwrap()
     }
 }
 
