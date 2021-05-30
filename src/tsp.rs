@@ -55,10 +55,6 @@ pub fn approximate_tsp_with_mst(vertices: &[[i64; 2]], tree: &[[[i64; 2]; 2]]) -
         .collect::<HashMap<_, _>>();
 
     loop {
-        // dbg!(adjacency_map
-        //     .iter()
-        //     .filter(|(_, vertex_edges)| vertex_edges.len() >= 3)
-        //     .count());
         if let Some(RemoveAddEdgePair {
             original_edge: [branch, disconnected_node],
             new_edge: [branch_tree_leaf, disconnected_tree_leaf],
