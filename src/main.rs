@@ -43,7 +43,7 @@ fn main() -> io::Result<()> {
     env_logger::init();
     let opt = Opt::from_args();
 
-    let image = {
+    let mut image = {
         let image = match opt.file {
             Some(filepath) => ImageReader::open(filepath)?.decode(),
             None => {
@@ -63,67 +63,41 @@ fn main() -> io::Result<()> {
             .reversed_axes()
     };
 
-    // https://en.wikipedia.org/wiki/Floyd%E2%80%93Steinberg_dithering
-    let dither = {
-        let mut dither = image.clone();
-        for k in 0..3 {
-            for j in 0..dither.shape()[2] {
-                for i in 0..dither.shape()[1] {
-                    let original_value = dither[[k, i, j]];
-                    let new_value = if original_value >= 128 {
-                        u8::MAX
-                    } else {
-                        u8::MIN
-                    };
-                    dither[[k, i, j]] = new_value;
-                    const OFFSETS: [[isize; 2]; 4] = [[1, 0], [-1, 1], [0, 1], [1, 1]];
-                    const QUANTIZATION: [u16; 4] = [7, 3, 5, 1];
-                    let (errs, add) = if original_value > new_value {
-                        let mut quantization_errors = [0; 4];
-                        for (idx, q) in QUANTIZATION.iter().enumerate() {
-                            quantization_errors[idx] =
-                                ((q * ((original_value - new_value) as u16)) / 16) as u8;
-                        }
-                        (quantization_errors, true)
-                    } else {
-                        let mut quantization_errors = [0; 4];
-                        for (idx, q) in QUANTIZATION.iter().enumerate() {
-                            quantization_errors[idx] =
-                                ((q * ((new_value - original_value) as u16)) / 16) as u8;
-                        }
-                        (quantization_errors, false)
-                    };
-                    for (offset, err) in OFFSETS.iter().zip(errs.iter()) {
-                        let index = [
-                            k as isize,
-                            (i as isize + offset[0]).clamp(-1, (dither.shape()[1] - 1) as isize),
-                            (j as isize + offset[1]).clamp(-1, (dither.shape()[2] - 1) as isize),
-                        ];
-                        let value = if add {
-                            dither
-                                .slice(s![index[0], index[1], index[2]])
-                                .into_scalar()
-                                .saturating_add(*err)
-                        } else {
-                            dither
-                                .slice(s![index[0], index[1], index[2]])
-                                .into_scalar()
-                                .saturating_sub(*err)
-                        };
-                        dither
-                            .slice_mut(s![index[0], index[1], index[2]])
-                            .fill(value);
-                    }
-                }
-            }
-        }
-        dither
-    };
+    // Add inverse lightness under D50 illumination
+    image
+        .push(
+            Axis(0),
+            image
+                .map_axis(Axis(0), |pixel| {
+                    const XYZ_LUMINANCE: [f64; 3] = [0.212671, 0.715160, 0.072169];
+                    let y = pixel
+                        .iter()
+                        .map(|component| *component as f64 / 255.)
+                        .map(|component| {
+                            if component <= 0.04045 {
+                                component / 12.92
+                            } else {
+                                ((component + 0.055) / 1.055).powf(2.4)
+                            }
+                        })
+                        .zip(&XYZ_LUMINANCE)
+                        .map(|(component, coefficient)| component * coefficient)
+                        .sum::<f64>();
 
-    // TODO: handle black pen
-    // let key = dither.map_axis(Axis(0), |pixel| {
-    //     (((pixel[0] as u16 + pixel[1] as u16 + pixel[2] as u16) / (3 * 255)) / 255) as u8
-    // });
+                    const DELTA: f64 = 6. / 29.;
+                    let l =
+                        116. * if y > DELTA.powi(3) {
+                            y.cbrt()
+                        } else {
+                            y / (3. * DELTA.powi(2)) + 4. / 29.
+                        } - 16.;
+                    // dbg!(y, l);
+                    255 - (l.clamp(0., 100.) * 25.).round() as u8
+                })
+                .view(),
+        )
+        .unwrap();
+
     let pen_diameter = opt.pen_diameter.get::<millimeter>();
     let in_to_mm = Length::new::<inch>(1.).get::<millimeter>();
     let width = (image.shape()[1] as f64 / opt.dots_per_inch * in_to_mm).round();
@@ -147,25 +121,41 @@ fn main() -> io::Result<()> {
         height / image.shape()[2] as f64,
     );
 
-    let mut rng = thread_rng();
     // Do green last so it appears on top of the SVG
-    for k in [0, 2, 1].iter().copied() {
+    for k in [3].iter().copied() {
         let mut voronoi_points = {
-            let mut indices = dither
-                .slice(s![k, .., ..])
-                .indexed_iter()
-                .filter_map(|idx_and_elem: ((usize, usize), &u8)| {
-                    if *idx_and_elem.1 == u8::MAX {
-                        Some([idx_and_elem.0 .0 as i64, idx_and_elem.0 .1 as i64])
-                    } else {
-                        None
-                    }
+            // let mut indices = dither
+            //     .slice(s![k, .., ..])
+            //     .indexed_iter()
+            //     .filter_map(|idx_and_elem: ((usize, usize), &u8)| {
+            //         if *idx_and_elem.1 == u8::MAX {
+            //             Some([idx_and_elem.0 .0 as i64, idx_and_elem.0 .1 as i64])
+            //         } else {
+            //             None
+            //         }
+            //     })
+            //     .collect::<Vec<_>>();
+            // indices.shuffle(&mut rng);
+            // indices.truncate(indices.len().min(100000));
+            // indices
+            let mut rng = thread_rng();
+            (0..10000)
+                .map(|_| {
+                    [
+                        rng.gen_range(0..image.shape()[1] as i64),
+                        rng.gen_range(0..image.shape()[2] as i64),
+                    ]
                 })
-                .collect::<Vec<_>>();
-            indices.shuffle(&mut rng);
-            indices.truncate(indices.len().min(20000));
-            indices
+                .collect::<Vec<_>>()
         };
+        if voronoi_points.len() < 3 {
+            warn!(
+                "Color channel {} has too few vertices ({}) to draw, skipping",
+                k,
+                voronoi_points.len()
+            );
+            continue;
+        }
 
         let mut colored_pixels;
         let mut last_average_distance: Option<f64> = None;
@@ -227,6 +217,10 @@ fn main() -> io::Result<()> {
             last_average_distance = Some(average_distance)
         }
 
+        // On the off chance 2 points end up being the same...
+        voronoi_points.sort();
+        voronoi_points.dedup();
+
         let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
         for vertex in &voronoi_points {
             delaunay.insert(*vertex);
@@ -241,6 +235,7 @@ fn main() -> io::Result<()> {
         //     ctx.stroke();
         // }
         let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_points, &tree);
+
         debug!("Draw to svg");
 
         if k == 0 {
@@ -249,7 +244,15 @@ fn main() -> io::Result<()> {
             ctx.set_source_rgb(0., 1., 0.);
         } else if k == 2 {
             ctx.set_source_rgb(0., 0., 1.);
+        } else if k == 3 {
+            ctx.set_source_rgb(0., 0., 0.);
         }
+
+        // for point in voronoi_points {
+        //     ctx.move_to(point[0] as f64 - 0.5, point[1] as f64 - 0.5);
+        //     ctx.line_to(point[0] as f64 + 0.5, point[1] as f64 + 0.5);
+        //     ctx.stroke();
+        // }
 
         if let Some(first) = tsp.first() {
             ctx.move_to(first[0] as f64, first[1] as f64);
