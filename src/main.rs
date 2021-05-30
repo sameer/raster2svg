@@ -251,9 +251,11 @@ fn main() -> io::Result<()> {
             ctx.set_source_rgb(0., 0., 1.);
         }
 
-        ctx.move_to(tsp[0][0][0] as f64, tsp[0][0][1] as f64);
-        for edge in &tsp {
-            ctx.line_to(edge[1][0] as f64, edge[1][1] as f64);
+        if let Some(first) = tsp.first() {
+            ctx.move_to(first[0] as f64, first[1] as f64);
+        }
+        for next in tsp.iter().skip(1) {
+            ctx.line_to(next[0] as f64, next[1] as f64);
         }
         ctx.stroke();
     }
