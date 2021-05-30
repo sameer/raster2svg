@@ -91,7 +91,7 @@ pub fn approximate_tsp_with_mst(vertices: &[[i64; 2]], tree: &[[[i64; 2]; 2]]) -
         if adjacency_map.get(&branch).unwrap().len() <= 2 {
             continue;
         }
-        // Disconnected node was once a branch and already processed this pair
+        // Disconnected node was once a branch, already processed this pair
         if !adjacency_map
             .get(&branch)
             .unwrap()
@@ -245,7 +245,9 @@ fn local_improvement(path: &[[i64; 2]]) -> Vec<[i64; 2]> {
 
         // TODO: try using disentanglement as a metric as opposed to distance
         match operator {
-            Operator::Relocate => {}
+            Operator::Relocate => {
+                // (0..sample_count)
+            }
             Operator::Disentangle => {
                 let mut swaps = (0..sample_count)
                     .map(|_| {

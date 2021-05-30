@@ -15,7 +15,7 @@ pub fn compute_voronoi(points: &[[i64; 2]], width: usize, height: usize) -> Vec<
         grid[point[1] as usize][point[0] as usize] = color;
     });
 
-    // Claim: without a scratchpad, converge to the correct point assignment faster
+    // Claim: don't actually need a scratchpad, without one we converge to the correct assignment faster
     // let mut grid_scratchpad = grid.clone();
     let mut round_step = (width.max(height)).next_power_of_two() / 2;
     let width = width as i64;
