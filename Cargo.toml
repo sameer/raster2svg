@@ -13,13 +13,12 @@ image = { version = "0.23", features = ["jpeg", "png", "tiff", "bmp"] }
 structopt = "0.3"
 log = "0"
 env_logger = "0"
-paste = "1"
 uom = "0.31"
 ndarray = { version = "0.15", features = ["approx"] }
-ndarray-stats = "0.5.0"
 rand = { version = "0.8", features = ["alloc"] }
 spade = "1.8"
 fxhash = "0.2"
+num-traits = "0.2"
 
 [dev-dependencies]
 pretty_assertions = "0.7"

@@ -5,7 +5,7 @@ use crate::abs_distance_squared;
 /// using the Jump Flooding Algorithm.
 ///
 /// https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf
-pub fn compute_voronoi(points: &[[i64; 2]], width: usize, height: usize) -> Vec<Vec<usize>> {
+pub fn compute_voronoi(points: &[[usize; 2]], width: usize, height: usize) -> Vec<Vec<usize>> {
     if points.is_empty() {
         return vec![];
     }
@@ -18,29 +18,40 @@ pub fn compute_voronoi(points: &[[i64; 2]], width: usize, height: usize) -> Vec<
     // Claim: don't actually need a scratchpad, without one we converge to the correct assignment faster
     // let mut grid_scratchpad = grid.clone();
     let mut round_step = (width.max(height)).next_power_of_two() / 2;
-    let width = width as i64;
-    let height = height as i64;
+
     while round_step != 0 {
         for j in 0..height {
             for i in 0..width {
                 for y_dir in -1..=1 {
-                    let y = j + y_dir * round_step as i64;
-                    if y < 0 || y >= height {
+                    let y = match y_dir {
+                        -1 => j.checked_sub(round_step),
+                        0 => Some(j),
+                        1 => j.checked_add(round_step),
+                        _ => unreachable!(),
+                    }
+                    .unwrap_or(height);
+                    if y >= height {
                         continue;
                     }
                     for x_dir in -1..=1 {
-                        let x = i + x_dir * round_step as i64;
-                        if x < 0 || x >= width {
+                        let x = match x_dir {
+                            -1 => i.checked_sub(round_step),
+                            0 => Some(i),
+                            1 => i.checked_add(round_step),
+                            _ => unreachable!(),
+                        }
+                        .unwrap_or(width);
+                        if x >= width {
                             continue;
                         }
-                        let new = grid[y as usize][x as usize];
+                        let new = grid[y][x];
                         if new != usize::MAX {
-                            let current = grid[j as usize][i as usize];
+                            let current = grid[j][i];
                             if current == usize::MAX
                                 || abs_distance_squared([i, j], points[new])
                                     < abs_distance_squared([i, j], points[current])
                             {
-                                grid[j as usize][i as usize] = new;
+                                grid[j][i] = new;
                             }
                         }
                     }
