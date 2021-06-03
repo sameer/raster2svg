@@ -234,6 +234,8 @@ impl Distribution<Operator> for Standard {
 
 /// Local improvement of an open loop TSP solution using the relocate, disentangle, 2-opt, and link swap operators.
 ///
+/// Uses simulated annealing noise in the first half of iterations for hill-climbing.
+///
 /// https://www.mdpi.com/2076-3417/9/19/3985/pdf
 ///
 fn local_improvement<
@@ -253,9 +255,11 @@ fn local_improvement<
     let mut simulated_annealing_noise_min = 0.;
     let mut rng = thread_rng();
 
-    let mut sample_count = (current.len() as f64 * 0.001) as usize;
+    let sample_count = (current.len() as f64 * 0.001) as usize;
     const ITERATIONS: usize = 20000;
 
+    // Right now this doesn't do anything,
+    // but there may be a good early stopping technique that could use it.
     let mut stuck_by_operator = [
         Operator::Relocate,
         Operator::Disentangle,
@@ -266,46 +270,38 @@ fn local_improvement<
     .map(|operator| (*operator, false))
     .collect::<HashMap<_, _>>();
 
+    // TODO: fix bug where annealing doesn't work because of skipping diffs that are less than 0
     for idx in 0..ITERATIONS {
-        let edge_iterator = (0..current.len()).zip(1..current.len());
         let operator: Operator = rng.gen();
-
-        // Early stopping
-        if idx >= ITERATIONS / 2 && stuck_by_operator.values().all(|x| *x) {
-            // if sample_count == current.len() {
-            //     break;
-            // }
-            // sample_count = (sample_count * 2).max(current.len());
-            // break;
-        }
+        let is_annealing = idx < ITERATIONS / 2;
 
         match operator {
             Operator::Relocate => {
                 let mut relocates = (0..sample_count)
                     .map(|_| rng.gen_range(1..current.len().saturating_sub(1)))
                     .collect::<Vec<_>>();
-                if let Some((i, edge, diff)) = relocates
+                // move i between j and j+1
+                if let Some((i, j, diff)) = relocates
                     .drain(..)
                     .map(|i| {
-                        (0..i.saturating_sub(1))
-                            .map(|x| (x, x + 1))
-                            .chain((i.saturating_add(2)..current.len()).map(|x| (x - 1, x)))
-                            .map(move |edge| (i, edge))
+                        (0..=i.saturating_sub(2))
+                            .chain((i.saturating_add(2)..current.len()).map(|j| j - 1))
+                            .map(move |j| (i, j))
                     })
                     .flatten()
-                    .map(|(i, edge)| {
-                        let positive_diff = abs_distance_squared(current[edge.0], current[edge.1])
+                    .map(|(i, j)| {
+                        let positive_diff = abs_distance_squared(current[j], current[j + 1])
                             + abs_distance_squared(current[i - 1], current[i])
                             + abs_distance_squared(current[i], current[i + 1]);
                         let negative_diff = abs_distance_squared(current[i - 1], current[i + 1])
-                            + abs_distance_squared(current[i], current[edge.0])
-                            + abs_distance_squared(current[i], current[edge.1]);
+                            + abs_distance_squared(current[i], current[j])
+                            + abs_distance_squared(current[i], current[j + 1]);
 
                         let diff = positive_diff.saturating_sub(negative_diff);
-                        (i, edge, diff)
+                        (i, j, diff)
                     })
                     .max_by_key(|(_, _, diff)| {
-                        if idx < ITERATIONS / 2 {
+                        if is_annealing {
                             T::from_f64(
                                 diff.to_f64().unwrap()
                                     * rng.gen_range(simulated_annealing_noise_min..=1.),
@@ -318,17 +314,19 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        continue;
+                        if !is_annealing {
+                            continue;
+                        }
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
 
                     let vertex = current.remove(i);
-                    if edge.1 < i {
-                        current.insert(edge.1, vertex);
+                    if j + 1 < i {
+                        current.insert(j + 1, vertex);
                     } else {
                         // everything got shifted to the left so it's 1 less
-                        current.insert(edge.0, vertex);
+                        current.insert(j, vertex);
                     }
 
                     current_sum = current_sum - diff;
@@ -344,6 +342,7 @@ fn local_improvement<
                 let mut swaps = (0..sample_count)
                     .map(|_| rng.gen_range(0..current.len()))
                     .collect::<Vec<_>>();
+                // swap i and j
                 if let Some((i, j, diff)) = swaps
                     .drain(..)
                     .map(|i| {
@@ -379,7 +378,7 @@ fn local_improvement<
                         (i, j, diff)
                     })
                     .max_by_key(|(_, _, diff)| {
-                        if idx < ITERATIONS / 2 {
+                        if is_annealing {
                             T::from_f64(
                                 diff.to_f64().unwrap()
                                     * rng.gen_range(simulated_annealing_noise_min..=1.),
@@ -392,7 +391,9 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        continue;
+                        if !is_annealing {
+                            continue;
+                        }
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
@@ -411,29 +412,21 @@ fn local_improvement<
                 let mut edges = (0..sample_count)
                     .map(|_| {
                         let i = rng.gen_range(0..current.len().saturating_sub(1));
-                        let j = i + 1;
+                        let j = i.saturating_add(1);
                         (i, j)
                     })
                     .collect::<Vec<_>>();
+                // permute the points of the this and other edges
                 if let Some((this, other, diff)) = edges
                     .drain(..)
                     .map(|(i, j)| {
                         (0..i).zip(1..i).map(move |other| (other, (i, j))).chain(
-                            (j + 1..current.len())
+                            (j.saturating_add(1)..current.len())
                                 .zip(j.saturating_add(2)..current.len())
                                 .map(move |other| ((i, j), other)),
                         )
                     })
                     .flatten()
-                    // = edge_iterator
-                    //     .map(|(i, j)| {
-                    //         let other_edge_iterator = j.saturating_add(1)..current.len();
-                    //         other_edge_iterator
-                    //             .clone()
-                    //             .zip(other_edge_iterator.clone().skip(1))
-                    //             .map(move |other| ((i, j), other))
-                    //     })
-                    //     .flatten()
                     .map(|(this, other)| {
                         (
                             this,
@@ -447,7 +440,7 @@ fn local_improvement<
                         )
                     })
                     .max_by_key(|(_, _, diff)| {
-                        if idx < ITERATIONS / 2 {
+                        if is_annealing {
                             T::from_f64(
                                 diff.to_f64().unwrap()
                                     * rng.gen_range(simulated_annealing_noise_min..=1.),
@@ -460,7 +453,9 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        continue;
+                        if !is_annealing {
+                            continue;
+                        }
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
@@ -475,7 +470,7 @@ fn local_improvement<
                         .zip(reversed_middle.iter())
                         .for_each(|(dest, origin)| *dest = *origin);
 
-                        current_sum = current_sum - diff;
+                    current_sum = current_sum - diff;
                     dbg!(idx, current_sum, best_sum);
 
                     if current_sum < best_sum {
@@ -487,7 +482,10 @@ fn local_improvement<
             Operator::LinkSwap => {
                 let first = *current.first().unwrap();
                 let last = *current.last().unwrap();
-                if let Some((i, j, pair, diff)) = edge_iterator
+
+                // Swap the first and/or last vertex with inner vertices
+                if let Some((i, j, pair, diff)) = (0..current.len())
+                    .zip(1..current.len())
                     .filter_map(|(i, j)| {
                         let from = current[i];
                         let to = current[j];
@@ -504,7 +502,7 @@ fn local_improvement<
                             .max_by_key(|(_, _, _, diff)| *diff)
                     })
                     .max_by_key(|(_, _, _, diff)| {
-                        if idx < ITERATIONS / 2 {
+                        if is_annealing {
                             T::from_f64(
                                 diff.to_f64().unwrap()
                                     * rng.gen_range(simulated_annealing_noise_min..=1.),
@@ -517,23 +515,27 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        continue;
+                        if !is_annealing {
+                            continue;
+                        }
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
 
                     if pair.new_edge[0] != pair.original_edge[0] {
-                        let reversed_head = current[..=i].iter().rev().copied().collect::<Vec<_>>();
+                        let reversed_prefix =
+                            current[..=i].iter().rev().copied().collect::<Vec<_>>();
                         current[..=i]
                             .iter_mut()
-                            .zip(reversed_head.iter())
+                            .zip(reversed_prefix.iter())
                             .for_each(|(dest, origin)| *dest = *origin);
                     }
                     if pair.new_edge[1] != pair.original_edge[1] {
-                        let reversed_tail = current[j..].iter().rev().copied().collect::<Vec<_>>();
+                        let reversed_suffix =
+                            current[j..].iter().rev().copied().collect::<Vec<_>>();
                         current[j..]
                             .iter_mut()
-                            .zip(reversed_tail.iter())
+                            .zip(reversed_suffix.iter())
                             .for_each(|(dest, origin)| *dest = *origin);
                     }
 
@@ -547,8 +549,10 @@ fn local_improvement<
                 }
             }
         }
-        simulated_annealing_noise_min =
-            (simulated_annealing_noise_min + 2. / ITERATIONS as f64).clamp(0., 1.);
+        if is_annealing {
+            simulated_annealing_noise_min =
+                (simulated_annealing_noise_min + 2. / ITERATIONS as f64).clamp(0., 1.);
+        }
     }
 
     best
