@@ -97,6 +97,7 @@ pub fn approximate_tsp_with_mst<
     branch_list.sort();
 
     while let Some(Edge([branch, disconnected_node])) = branch_list.pop() {
+        dbg!(branch_list.len());
         // No longer a branch
         if adjacency_map.get(&branch).unwrap().len() <= 2 {
             continue;
@@ -122,21 +123,18 @@ pub fn approximate_tsp_with_mst<
 
         // Now there are (in theory) two disconnected trees
         // Find the two connected trees in the graph
-        let mut branch_tree_visited: Vec<bool> = vec![false; vertices.len()];
+        let mut disconnected_tree_visited: Vec<bool> = vec![false; vertices.len()];
+        let mut disconnected_tree_visit_count = 1;
         {
-            branch_tree_visited[*vertex_to_index.get(&branch).unwrap()] = true;
-            let mut branch_dfs = vec![&branch];
-            while let Some(head) = branch_dfs.pop() {
+            disconnected_tree_visited[*vertex_to_index.get(&disconnected_node).unwrap()] = true;
+            let mut dfs = vec![&disconnected_node];
+            while let Some(head) = dfs.pop() {
                 for adjacency in adjacency_map.get(head).unwrap() {
                     let adjacency_idx = *vertex_to_index.get(adjacency).unwrap();
-                    // // Explicitly skip this node to avoid entering the other connected component
-                    // assert_ne!(*adjacency, disconnected_node);
-                    // if *adjacency == disconnected_node {
-
-                    // } else
-                    if !branch_tree_visited[adjacency_idx] {
-                        branch_tree_visited[adjacency_idx] = true;
-                        branch_dfs.push(adjacency);
+                    if !disconnected_tree_visited[adjacency_idx] {
+                        disconnected_tree_visited[adjacency_idx] = true;
+                        disconnected_tree_visit_count += 1;
+                        dfs.push(adjacency);
                     }
                 }
             }
@@ -145,26 +143,65 @@ pub fn approximate_tsp_with_mst<
         // Find leaves in the two
         // Pick the shortest possible link between two leaves that would reconnect the trees
 
-        let (branch_tree_leaves, disconnected_tree_leaves) = branch_tree_visited
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| adjacency_map.get(&vertices[*i]).unwrap().len() <= 1)
-            .partition::<Vec<_>, _>(|(_, in_branch_tree)| **in_branch_tree);
+        let (branch_tree_leaf, disconnected_tree_leaf) = if disconnected_tree_visit_count
+            > vertices.len() - disconnected_tree_visit_count
+        {
+            let branch_tree_leaves = disconnected_tree_visited
+                .iter()
+                .enumerate()
+                .filter(|(i, in_disconnected_tree)| {
+                    !**in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
+                })
+                .map(|(branch_idx, _)| vertices[branch_idx])
+                .collect::<Vec<_>>();
 
-        let (branch_tree_leaf, disconnected_tree_leaf) = branch_tree_leaves
-            .iter()
-            .map(|(branch_idx, _)| vertices[*branch_idx])
-            .map(|branch_tree_leaf| {
-                disconnected_tree_leaves
-                    .iter()
-                    .map(|(disconnected_idx, _)| vertices[*disconnected_idx])
-                    .map(move |disconnected_tree_leaf| (branch_tree_leaf, disconnected_tree_leaf))
-            })
-            .flatten()
-            .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
-                abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
-            })
-            .unwrap();
+            disconnected_tree_visited
+                .iter()
+                .enumerate()
+                .filter(|(i, in_disconnected_tree)| {
+                    **in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
+                })
+                .map(|(disconnected_idx, _)| vertices[disconnected_idx])
+                .map(|disconnected_tree_leaf| {
+                    branch_tree_leaves
+                        .iter()
+                        .map(move |branch_tree_leaf| (*branch_tree_leaf, disconnected_tree_leaf))
+                })
+                .flatten()
+                .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
+                    abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
+                })
+                .unwrap()
+        } else {
+            let disconnected_tree_leaves = disconnected_tree_visited
+                .iter()
+                .enumerate()
+                .filter(|(i, in_disconnected_tree)| {
+                    **in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
+                })
+                .map(|(disconnected_idx, _)| vertices[disconnected_idx])
+                .collect::<Vec<_>>();
+
+            disconnected_tree_visited
+                .iter()
+                .enumerate()
+                .filter(|(i, in_disconnected_tree)| {
+                    !**in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
+                })
+                .map(|(branch_idx, _)| vertices[branch_idx])
+                .map(|branch_tree_leaf| {
+                    disconnected_tree_leaves
+                        .iter()
+                        .map(move |disconnected_tree_leaf| {
+                            (branch_tree_leaf, *disconnected_tree_leaf)
+                        })
+                })
+                .flatten()
+                .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
+                    abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
+                })
+                .unwrap()
+        };
 
         // Connect leaves
         adjacency_map
@@ -314,9 +351,7 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        if !is_annealing {
-                            continue;
-                        }
+                        continue;
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
@@ -391,9 +426,7 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        if !is_annealing {
-                            continue;
-                        }
+                        continue;
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
@@ -453,9 +486,7 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        if !is_annealing {
-                            continue;
-                        }
+                        continue;
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
@@ -515,9 +546,7 @@ fn local_improvement<
                 {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
-                        if !is_annealing {
-                            continue;
-                        }
+                        continue;
                     } else {
                         *stuck_by_operator.get_mut(&operator).unwrap() = false;
                     }
