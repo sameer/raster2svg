@@ -1,18 +1,21 @@
 use cairo::Context;
 use image::io::Reader as ImageReader;
 use log::*;
+use lyon_geom::{point, LineSegment};
 use ndarray::prelude::*;
-use rand::{distributions::Uniform, prelude::*};
+use num_traits::PrimInt;
 use spade::delaunay::IntDelaunayTriangulation;
 use std::{
     env,
     io::{self, Read},
     path::PathBuf,
+    vec,
 };
 use structopt::StructOpt;
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
+mod hull;
 mod mst;
 mod tsp;
 mod voronoi;
@@ -47,7 +50,7 @@ fn main() -> io::Result<()> {
     env_logger::init();
     let opt = Opt::from_args();
 
-    let (pen_image, pen_point_counts) = {
+    let pen_image = {
         let image = match opt.file {
             Some(filepath) => ImageReader::open(filepath)?.decode(),
             None => {
@@ -80,20 +83,15 @@ fn main() -> io::Result<()> {
                     Axis(0),
                     image
                         .map_axis(Axis(0), |pixel| {
-                            let val = (1.
-                                - pixel
-                                    .iter()
-                                    .zip(color)
-                                    .map(|(x1, x2)| (x1 - x2).powi(2))
-                                    .sum::<f64>()
-                                    .sqrt()
-                                    / 3.0_f64.sqrt())
-                            .powi(2);
-                            if val < 0.2 {
-                                0.0
-                            } else {
-                                val
-                            }
+                            1. - pixel
+                                .iter()
+                                .zip(color)
+                                .map(|(x1, x2)| (x1 - x2).powi(2))
+                                .sum::<f64>()
+                                .sqrt()
+                                / 3.0_f64.sqrt()
+
+                            // pixel.iter().zip(color).map(|(x1, x2)| x1 * x2).sum::<f64>()
                         })
                         .view(),
                 )
@@ -130,114 +128,62 @@ fn main() -> io::Result<()> {
                                 y / (3. * DELTA.powi(2)) + 4. / 29.
                             } - 16.;
 
-                        // 1. - (pixel
-                        //     .iter()
-                        //     .max_by(|a, b| a.partial_cmp(&b).unwrap())
-                        //     .unwrap())
-                        // 1. - (pixel
-                        //     .iter()
-                        //     .max_by(|a, b| a.partial_cmp(&b).unwrap())
-                        //     .unwrap()
-                        //     + pixel
-                        //         .iter()
-                        //         .min_by(|a, b| a.partial_cmp(&b).unwrap())
-                        //         .unwrap())
-                        //     / 2.
-
-                        // let dist = pixel.iter().map(|x| x.powi(2)).sum::<f64>().sqrt()
-                        //     / 3.0_f64.sqrt();
-                        // if dist
-                        //     < [RED, GREEN, BLUE]
-                        //         .iter()
-                        //         .map(|color| {
-                        //             pixel
-                        //                 .iter()
-                        //                 .zip(color)
-                        //                 .map(|(x1, x2)| (x1 - x2).powi(2))
-                        //                 .sum::<f64>()
-                        //                 .sqrt()
-                        //                 / 3.0_f64.sqrt()
-                        //         })
-                        //         .max_by(|a, b| a.partial_cmp(b).unwrap())
-                        //         .unwrap()
-                        // {
-                        (1. - (l.clamp(0., 100.) / 100.)).powi(2)
-                        // } else {
-                        //     0.
-                        // }
-
-                        // 1. - pixel.iter().sum::<f64>() / 3.
+                        1. - (l.clamp(0., 100.) / 100.)
                     })
                     .view(),
             )
             .unwrap();
 
         // https://en.wikipedia.org/wiki/Floyd%E2%80%93Steinberg_dithering
-        let dither = {
-            let mut dither = image.clone();
-            for k in 0..=2 {
-                for j in 0..dither.shape()[2] {
-                    for i in 0..dither.shape()[1] {
-                        let original_value = dither[[k, i, j]];
-                        let new_value = if original_value >= 0.5 { 1.0 } else { 0.0 };
-                        dither[[k, i, j]] = new_value;
-                        const OFFSETS: [[isize; 2]; 4] = [[1, 0], [-1, 1], [0, 1], [1, 1]];
-                        const QUANTIZATION: [f64; 4] = [7., 3., 5., 1.];
-                        let (errs, add) = if original_value > new_value {
-                            let mut quantization_errors = [0.0; 4];
-                            for (idx, q) in QUANTIZATION.iter().enumerate() {
-                                quantization_errors[idx] = q * (original_value - new_value) / 16.;
-                            }
-                            (quantization_errors, true)
-                        } else {
-                            let mut quantization_errors = [0.0; 4];
-                            for (idx, q) in QUANTIZATION.iter().enumerate() {
-                                quantization_errors[idx] = q * (original_value - new_value) / 16.;
-                            }
-                            (quantization_errors, false)
-                        };
-                        for (offset, err) in OFFSETS.iter().zip(errs.iter()) {
-                            let index = [
-                                k as isize,
-                                (i as isize + offset[0])
-                                    .clamp(-1, (dither.shape()[1] - 1) as isize),
-                                (j as isize + offset[1])
-                                    .clamp(-1, (dither.shape()[2] - 1) as isize),
-                            ];
-                            let value = if add {
-                                dither.slice(s![index[0], index[1], index[2]]).into_scalar() - *err
-                            } else {
-                                dither.slice(s![index[0], index[1], index[2]]).into_scalar() - *err
-                            };
-                            dither
-                                .slice_mut(s![index[0], index[1], index[2]])
-                                .fill(value);
+        for k in 0..pen_image.shape()[0] {
+            for j in 0..pen_image.shape()[2] {
+                for i in 0..pen_image.shape()[1] {
+                    let original_value = pen_image[[k, i, j]];
+                    let new_value = original_value.powi(3);
+
+                    pen_image[[k, i, j]] = new_value;
+                    const OFFSETS: [[isize; 2]; 4] = [[1, 0], [-1, 1], [0, 1], [1, 1]];
+                    const QUANTIZATION: [f64; 4] = [7., 3., 5., 1.];
+
+                    let mut quantization_errors = [0.0; 4];
+                    for (idx, q) in QUANTIZATION.iter().enumerate() {
+                        quantization_errors[idx] = q * (original_value - new_value) / 16.;
+                    }
+
+                    for (offset, err) in OFFSETS.iter().zip(quantization_errors.iter()) {
+                        let x = match offset[0] {
+                            -1 => i.checked_sub(1),
+                            0 => Some(i),
+                            1 => i.checked_add(1),
+                            _ => unreachable!(),
                         }
+                        .unwrap_or(image.shape()[1]);
+                        let y = match offset[1] {
+                            -1 => j.checked_sub(1),
+                            0 => Some(j),
+                            1 => j.checked_add(1),
+                            _ => unreachable!(),
+                        }
+                        .unwrap_or(image.shape()[2]);
+                        if x >= image.shape()[1] || y >= image.shape()[2] {
+                            continue;
+                        }
+                        // TODO: CCCVT
+                        // pen_image[[k, x, y]] += err;
                     }
                 }
             }
-            dither
-        };
-
-        let mut pen_point_counts = [0, 0, 0, 0];
-        for pixel in dither.lanes(Axis(0)) {
-            for (i, value) in pixel.iter().enumerate() {
-                if *value == 1.0 {
-                    pen_point_counts[i] += 1;
-                }
-            }
         }
-        pen_point_counts[3] = pen_point_counts[0..=2].iter().sum::<usize>() / 3;
-        dbg!(pen_point_counts);
-        pen_point_counts.iter_mut().for_each(|x| *x /= 8);
-        // dbg!(&pen_point_counts);
-        (pen_image, pen_point_counts)
+        pen_image
     };
 
+    let mm_per_inch = Length::new::<inch>(1.).get::<millimeter>();
+    let dots_per_mm = opt.dots_per_inch / mm_per_inch;
     let pen_diameter = opt.pen_diameter.get::<millimeter>();
-    let in_to_mm = Length::new::<inch>(1.).get::<millimeter>();
-    let width = (pen_image.shape()[1] as f64 / opt.dots_per_inch * in_to_mm).round();
-    let height = (pen_image.shape()[2] as f64 / opt.dots_per_inch * in_to_mm).round();
+    let pen_diameter_in_pixels = pen_diameter * dots_per_mm;
+    let stipple_area = (pen_diameter_in_pixels / 2.).powi(2) * std::f64::consts::PI;
+    let width = (pen_image.shape()[1] as f64 / dots_per_mm).round();
+    let height = (pen_image.shape()[2] as f64 / dots_per_mm).round();
 
     let mut surf = match &opt.out {
         Some(_) => cairo::SvgSurface::new(width, height, opt.out).unwrap(),
@@ -257,134 +203,163 @@ fn main() -> io::Result<()> {
         height / pen_image.shape()[2] as f64,
     );
 
-    for k in [3usize, 0, 1, 2].iter().copied() {
+    for k in [3usize].iter().copied() {
         info!("Processing {}", k);
-        let mut voronoi_points = {
-            // let mut indices = dither
-            //     .slice(s![k, .., ..])
-            //     .indexed_iter()
-            //     .filter_map(|idx_and_elem: ((usize, usize), &u8)| {
-            //         if *idx_and_elem.1 == u8::MAX {
-            //             Some([idx_and_elem.0 .0 as i64, idx_and_elem.0 .1 as i64])
-            //         } else {
-            //             None
-            //         }
-            //     })
-            //     .collect::<Vec<_>>();
-            // indices.shuffle(&mut rng);
-            // indices.truncate(indices.len().min(100000));
-            // indices
+        let mut voronoi_sites = vec![[pen_image.shape()[1] / 2, pen_image.shape()[2] / 2]];
 
-            let mut rng = thread_rng();
-            // (0..20000)
-            //     .map(|_| {
-            //         [
-            //             rng.gen_range(0..image.shape()[1]),
-            //             rng.gen_range(0..image.shape()[2]),
-            //         ]
-            //     })
-            //     .collect::<Vec<_>>()
-            let mut points = Vec::with_capacity(pen_point_counts[k]);
-            let distribution = Uniform::from(0.0..1.);
-            while points.len() < points.capacity() {
-                let x = rng.gen_range(0..pen_image.shape()[1]);
-                let y = rng.gen_range(0..pen_image.shape()[2]);
-                let pick_probability = distribution.sample(&mut rng);
-                if pen_image[[k, x, y]] > pick_probability {
-                    points.push([x, y]);
+        let initial_hysteresis = 0.6;
+        let hysteresis_delta = 0.01;
+        for iteration in 0..50 {
+            debug!("Jump flooding voronoi");
+            let colored_pixels = voronoi::jump_flooding_voronoi(
+                &voronoi_sites,
+                pen_image.shape()[1],
+                pen_image.shape()[2],
+            );
+            let expected_assignment_capacity =
+                pen_image.shape()[1] * pen_image.shape()[2] / voronoi_sites.len();
+            let mut sites_to_points =
+                vec![
+                    Vec::<[usize; 2]>::with_capacity(expected_assignment_capacity);
+                    voronoi_sites.len()
+                ];
+            for i in 0..pen_image.shape()[1] as usize {
+                for j in 0..pen_image.shape()[2] as usize {
+                    sites_to_points[colored_pixels[j][i]].push([i, j]);
                 }
             }
-            points
-        };
-        if voronoi_points.len() < 3 {
+
+            debug!("Linde-Buzo-Gray Stippling");
+
+            let current_hysteresis = initial_hysteresis + iteration as f64 * hysteresis_delta;
+            let remove_threshold = (1. - current_hysteresis / 2.) * stipple_area;
+            let split_threshold = (1. + current_hysteresis / 2.) * stipple_area;
+
+            let mut new_sites = Vec::with_capacity(voronoi_sites.len());
+            let mut changed = false;
+            for (_, points) in voronoi_sites.iter().zip(sites_to_points.iter()) {
+                let density = points
+                    .iter()
+                    .map(|[x, y]| pen_image[[k, *x, *y]])
+                    .sum::<f64>();
+                let scaled_density = density;
+                if scaled_density < remove_threshold {
+                    changed = true;
+                    continue;
+                }
+                let denominator = density;
+                let numerator_y = points
+                    .iter()
+                    .map(|[x, y]| *y as f64 * pen_image[[k, *x, *y]])
+                    .sum::<f64>();
+                let numerator_x = points
+                    .iter()
+                    .map(|[x, y]| *x as f64 * pen_image[[k, *x, *y]])
+                    .sum::<f64>();
+                let centroid = [
+                    ((numerator_x / denominator).round() as usize)
+                        .clamp(0, pen_image.shape()[1] - 1),
+                    ((numerator_y / denominator).round() as usize)
+                        .clamp(0, pen_image.shape()[2] - 1),
+                ];
+                if scaled_density < split_threshold {
+                    new_sites.push(centroid);
+                } else {
+                    if points.len() < 3 {
+                        new_sites.push(centroid);
+                        warn!("Can't split, there are too few points");
+                        continue;
+                    }
+                    let hull = hull::convex_hull(&points);
+
+                    let radius = hull
+                        .iter()
+                        .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
+                        .map(|(from, to)| {
+                            let edge = LineSegment {
+                                from: point(from[0] as f64, from[1] as f64),
+                                to: point(to[0] as f64, to[1] as f64),
+                            }
+                            .to_line();
+                            edge.distance_to_point(&point(centroid[0] as f64, centroid[1] as f64))
+                        })
+                        .min_by(|a, b| a.partial_cmp(&b).unwrap())
+                        .unwrap();
+
+                    if let Some((centroid_to_vertex, centroid_to_edge)) = hull
+                        .iter()
+                        .filter_map(|vertex| {
+                            let centroid_to_vertex = LineSegment {
+                                from: point(centroid[0] as f64, centroid[1] as f64),
+                                to: point(vertex[0] as f64, vertex[1] as f64),
+                            };
+                            let line = centroid_to_vertex.to_line();
+
+                            hull.iter()
+                                .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
+                                .filter(|(from, to)| *from != vertex && *to != vertex)
+                                .filter_map(|(from, to)| {
+                                    let edge = LineSegment {
+                                        from: point(from[0] as f64, from[1] as f64),
+                                        to: point(to[0] as f64, to[1] as f64),
+                                    };
+                                    edge.line_intersection(&line)
+                                })
+                                .map(|opposite_edge_intersection| LineSegment {
+                                    from: centroid_to_vertex.from,
+                                    to: opposite_edge_intersection,
+                                })
+                                .map(|centroid_to_edge| (centroid_to_vertex, centroid_to_edge))
+                                .next()
+                        })
+                        .max_by(|(a1, a2), (b1, b2)| {
+                            a1.length()
+                                .min(a2.length())
+                                .partial_cmp(&b1.length().min(b2.length()))
+                                .unwrap()
+                        })
+                    {
+                        let left =
+                            centroid_to_vertex.sample(radius / 2. / centroid_to_vertex.length());
+                        let right =
+                            centroid_to_edge.sample(radius / 2. / centroid_to_edge.length());
+                        new_sites.push(left.to_usize().to_array());
+                        new_sites.push(right.to_usize().to_array());
+                        changed = true;
+                    } else {
+                        warn!("unable to split but it wants to be, moving to centroid instead");
+                        new_sites.push(centroid);
+                    }
+                }
+            }
+
+            debug!("Check stopping condition (points: {})", new_sites.len());
+            voronoi_sites = new_sites;
+            if !changed {
+                break;
+            }
+        }
+
+        // On the off chance 2 points end up being the same...
+        voronoi_sites.sort_unstable();
+        voronoi_sites.dedup();
+
+        if voronoi_sites.len() < 3 {
             warn!(
                 "Color channel {} has too few vertices ({}) to draw, skipping",
                 k,
-                voronoi_points.len()
+                voronoi_sites.len()
             );
             continue;
         }
 
-        let mut colored_pixels;
-        let mut last_average_distance: Option<f64> = None;
-        loop {
-            debug!("Jump flooding voronoi");
-            colored_pixels = voronoi::compute_voronoi(
-                &voronoi_points,
-                pen_image.shape()[1],
-                pen_image.shape()[2],
-            );
-
-            debug!("Secord's algorithm");
-            let expected_assignment_capacity =
-                pen_image.shape()[1] * pen_image.shape()[2] / voronoi_points.len();
-            let mut point_assignments =
-                vec![
-                    Vec::<[usize; 2]>::with_capacity(expected_assignment_capacity);
-                    voronoi_points.len()
-                ];
-            for i in 0..pen_image.shape()[1] as usize {
-                for j in 0..pen_image.shape()[2] as usize {
-                    point_assignments[colored_pixels[j][i]].push([i, j]);
-                }
-            }
-
-            let centroids: Vec<[usize; 2]> = point_assignments
-                .iter()
-                .map(|point_assignment| {
-                    let denominator = point_assignment.iter().fold(0., |mut acc, [x, y]| {
-                        acc += pen_image[[k, *x, *y]];
-                        acc
-                    });
-                    let numerator_y = point_assignment.iter().fold(0., |mut acc, [x, y]| {
-                        acc += *y as f64 * pen_image[[k, *x, *y]];
-                        acc
-                    });
-                    let numerator_x = point_assignment.iter().fold(0., |mut acc, [x, y]| {
-                        acc += *x as f64 * pen_image[[k, *x, *y]];
-                        acc
-                    });
-                    [numerator_x / denominator, numerator_y / denominator]
-                })
-                .map(|[x, y]| {
-                    [
-                        (x.round() as usize).clamp(0, pen_image.shape()[1] - 1),
-                        (y.round() as usize).clamp(0, pen_image.shape()[2] - 1),
-                    ]
-                })
-                .collect();
-
-            debug!("Check stopping condition");
-            // stopping condition: average distance moved by all stippling points is small
-            let distance_sum = voronoi_points
-                .iter()
-                .zip(centroids.iter())
-                .map(|(voronoi, centroid)| abs_distance_squared(*voronoi, *centroid))
-                .map(|distance_squared| (distance_squared as f64))
-                .sum::<f64>()
-                .sqrt();
-            voronoi_points = centroids;
-            let average_distance = distance_sum / voronoi_points.len() as f64;
-            debug!("at {}", average_distance);
-            if let Some(last_average_distance) = last_average_distance {
-                if (last_average_distance - average_distance).abs() <= f64::EPSILON {
-                    break;
-                }
-            }
-            last_average_distance = Some(average_distance)
-        }
-
-        // On the off chance 2 points end up being the same...
-        voronoi_points.sort_unstable();
-        voronoi_points.dedup();
-
         let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
-        for vertex in &voronoi_points {
+        for vertex in &voronoi_sites {
             delaunay.insert([vertex[0] as i64, vertex[1] as i64]);
         }
 
-        let tree = crate::mst::compute_mst(&voronoi_points, &delaunay);
-        let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_points, &tree);
+        let tree = crate::mst::compute_mst(&voronoi_sites, &delaunay);
+        let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_sites, &tree);
 
         debug!("Draw to svg");
 
@@ -405,7 +380,7 @@ fn main() -> io::Result<()> {
         //     ctx.stroke();
         // }
 
-        // for point in voronoi_points {
+        // for point in voronoi_sites {
         //     ctx.move_to(point[0] as f64 - 0.5, point[1] as f64 - 0.5);
         //     ctx.line_to(point[0] as f64 + 0.5, point[1] as f64 + 0.5);
         //     ctx.stroke();
@@ -423,7 +398,8 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-pub fn abs_distance_squared<T: num_traits::int::PrimInt>(a: [T; 2], b: [T; 2]) -> T {
+#[inline]
+fn abs_distance_squared<T: PrimInt>(a: [T; 2], b: [T; 2]) -> T {
     let x_diff = if a[0] > b[0] {
         a[0] - b[0]
     } else {
