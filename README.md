@@ -55,7 +55,7 @@ Notice for lawyers: no papers are hosted here, they are all provided by the auth
 
 ## Honorable mentions
 
-There are also some noteworthy papers that while interesting did not directly influence raster2svg.
+There are also some noteworthy papers that while interesting did not directly influence raster2svg (yet!).
 
 * Amplitude Modulated Line-Based Halftoning http://graphics.uni-konstanz.de/publikationen/Ahmed2016AmplitudeModulatedLine/paper.pdf
 * Structure grid for directional stippling http://www.cs.umsl.edu/~kang/Papers/kang_gm2011.pdf
@@ -69,3 +69,5 @@ There are also some noteworthy papers that while interesting did not directly in
 * Edge-Constrained Tile Mosaics http://archive.bridgesmathart.org/2007/bridges2007-351.pdf
 * Modular line-based halftoning via recursive division https://sci-hub.st/10.1145/2630397.2630403
 * Hilbert halftone art: https://possiblywrong.wordpress.com/2017/12/26/hilbert-halftone-art/
+* Abstracting images into continuous-line artistic styles https://sci-hub.st/https://doi.org/10.1007/s00371-013-0809-1
+* A Graph‐based Approach to Continuous Line Illustrations with Variable Levels of Detail https://www.u-aizu.ac.jp/~shigeo/pdf/pg2011c-preprint.pdf
