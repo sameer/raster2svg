@@ -14,7 +14,7 @@ structopt = "0.3"
 log = "0"
 env_logger = "0"
 uom = "0.31"
-ndarray = { version = "0.15", features = ["approx"] }
+ndarray = { version = "0.15" }
 rand = { version = "0.8", features = ["alloc"] }
 spade = "1.8"
 fxhash = "0.2"
