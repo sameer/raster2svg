@@ -33,13 +33,13 @@ pub fn jump_flooding_voronoi(sites: &[[usize; 2]], width: usize, height: usize) 
                     width
                 };
                 for j in y_range.clone() {
+                    let y = match y_dir {
+                        -1 => j - round_step,
+                        0 => j,
+                        1 => j + round_step,
+                        _ => unreachable!(),
+                    };
                     for i in x_range.clone() {
-                        let y = match y_dir {
-                            -1 => j - round_step,
-                            0 => j,
-                            1 => j + round_step,
-                            _ => unreachable!(),
-                        };
                         let x = match x_dir {
                             -1 => i - 1,
                             0 => i,
