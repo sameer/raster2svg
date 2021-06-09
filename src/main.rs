@@ -134,43 +134,10 @@ fn main() -> io::Result<()> {
             )
             .unwrap();
 
-        // https://en.wikipedia.org/wiki/Floyd%E2%80%93Steinberg_dithering
         for k in 0..pen_image.shape()[0] {
             for j in 0..pen_image.shape()[2] {
                 for i in 0..pen_image.shape()[1] {
-                    let original_value = pen_image[[k, i, j]];
-                    let new_value = original_value.powi(3);
-
-                    pen_image[[k, i, j]] = new_value;
-                    const OFFSETS: [[isize; 2]; 4] = [[1, 0], [-1, 1], [0, 1], [1, 1]];
-                    const QUANTIZATION: [f64; 4] = [7., 3., 5., 1.];
-
-                    let mut quantization_errors = [0.0; 4];
-                    for (idx, q) in QUANTIZATION.iter().enumerate() {
-                        quantization_errors[idx] = q * (original_value - new_value) / 16.;
-                    }
-
-                    for (offset, err) in OFFSETS.iter().zip(quantization_errors.iter()) {
-                        let x = match offset[0] {
-                            -1 => i.checked_sub(1),
-                            0 => Some(i),
-                            1 => i.checked_add(1),
-                            _ => unreachable!(),
-                        }
-                        .unwrap_or(image.shape()[1]);
-                        let y = match offset[1] {
-                            -1 => j.checked_sub(1),
-                            0 => Some(j),
-                            1 => j.checked_add(1),
-                            _ => unreachable!(),
-                        }
-                        .unwrap_or(image.shape()[2]);
-                        if x >= image.shape()[1] || y >= image.shape()[2] {
-                            continue;
-                        }
-                        // TODO: CCCVT
-                        // pen_image[[k, x, y]] += err;
-                    }
+                    pen_image[[k, i, j]] = pen_image[[k, i, j]].powi(2);
                 }
             }
         }
