@@ -2,7 +2,7 @@ use cairo::{Context, LineCap};
 use color::{ciexyz_to_cielab, srgb_to_ciexyz, srgb_to_hsl};
 use image::io::Reader as ImageReader;
 use log::*;
-use lyon_geom::{euclid::Vector2D, point, vector, Angle, LineSegment};
+use lyon_geom::{point, vector, Line, LineSegment};
 use ndarray::prelude::*;
 use num_traits::PrimInt;
 use spade::delaunay::IntDelaunayTriangulation;
@@ -96,7 +96,6 @@ fn main() -> io::Result<()> {
         .reversed_axes();
 
         let image_in_cielab = ciexyz_to_cielab(&srgb_to_ciexyz(&image));
-        let image_in_hsl = srgb_to_hsl(&image);
         let mut pen_image: Array3<f64> =
             Array::zeros((4, image_in_cielab.shape()[1], image_in_cielab.shape()[2]));
 
@@ -129,26 +128,31 @@ fn main() -> io::Result<()> {
                         }
                     }));
             }),
-            ColorModel::Hsl => [
-                vector(1.0, 0.0),
-                vector(-0.5, 3.0f64.sqrt() / 2.0),
-                vector(-0.5, -3.0f64.sqrt() / 2.0),
-            ]
-            .iter()
-            .enumerate()
-            .for_each(|(i, color)| {
-                pen_image
-                    .slice_mut(s![i, .., ..])
-                    .assign(&image_in_hsl.map_axis(Axis(0), |hsl| {
-                        let (sin, cos) = hsl[0].sin_cos();
-                        let hue_vector = vector(cos, sin) * hsl[1];
-                        if hue_vector.angle_to(*color).radians.abs() > std::f64::consts::FRAC_PI_2 {
-                            0.0
-                        } else {
-                            hue_vector.project_onto_vector(*color).length() * hsl[2]
-                        }
-                    }));
-            }),
+            ColorModel::Hsl => {
+                let image_in_hsl = srgb_to_hsl(&image);
+                [
+                    vector(1.0, 0.0),
+                    vector(-0.5, 3.0f64.sqrt() / 2.0),
+                    vector(-0.5, -3.0f64.sqrt() / 2.0),
+                ]
+                .iter()
+                .enumerate()
+                .for_each(|(i, color)| {
+                    pen_image
+                        .slice_mut(s![i, .., ..])
+                        .assign(&image_in_hsl.map_axis(Axis(0), |hsl| {
+                            let (sin, cos) = hsl[0].sin_cos();
+                            let hue_vector = vector(cos, sin) * hsl[1];
+                            if hue_vector.angle_to(*color).radians.abs()
+                                > std::f64::consts::FRAC_PI_2
+                            {
+                                0.0
+                            } else {
+                                hue_vector.project_onto_vector(*color).length() * hsl[2]
+                            }
+                        }));
+                })
+            }
         }
 
         // Linearize color mapping for line drawings
@@ -184,7 +188,7 @@ fn main() -> io::Result<()> {
         height / pen_image.shape()[2] as f64,
     );
 
-    for k in [0, 2, 3].iter().copied::<usize>() {
+    for k in [0, 1, 2, 3].iter().copied::<usize>() {
         info!("Processing {}", k);
         let mut voronoi_sites = vec![[pen_image.shape()[1] / 2, pen_image.shape()[2] / 2]];
 
@@ -232,96 +236,105 @@ fn main() -> io::Result<()> {
                     continue;
                 }
                 let denominator = density;
-                let numerator_y = points
+                let first_order_y = points
                     .iter()
                     .map(|[x, y]| *y as f64 * pen_image[[k, *x, *y]])
                     .sum::<f64>();
-                let numerator_x = points
+                let first_order_x = points
                     .iter()
                     .map(|[x, y]| *x as f64 * pen_image[[k, *x, *y]])
                     .sum::<f64>();
-                let centroid = [
-                    ((numerator_x / denominator).round() as usize)
-                        .clamp(0, pen_image.shape()[1] - 1),
-                    ((numerator_y / denominator).round() as usize)
-                        .clamp(0, pen_image.shape()[2] - 1),
-                ];
+                let centroid = point(
+                    (first_order_x / denominator).clamp(0., (pen_image.shape()[1] - 1) as f64),
+                    (first_order_y / denominator).clamp(0., (pen_image.shape()[2] - 1) as f64),
+                );
                 if scaled_density < split_threshold {
-                    new_sites.push(centroid);
+                    new_sites.push(centroid.round().cast::<usize>().to_array());
                 } else {
                     if points.len() < 3 {
-                        new_sites.push(centroid);
+                        new_sites.push(centroid.round().cast::<usize>().to_array());
                         warn!("Can't split, there are too few points");
                         continue;
                     }
-                    let hull = hull::convex_hull(&points);
+                    let second_order_x = points
+                        .iter()
+                        .map(|[x, y]| x.pow(2) as f64 * pen_image[[k, *x, *y]])
+                        .sum::<f64>();
+                    let second_order_xy = points
+                        .iter()
+                        .map(|[x, y]| (x * y) as f64 * pen_image[[k, *x, *y]])
+                        .sum::<f64>();
+                    let second_order_y = points
+                        .iter()
+                        .map(|[x, y]| y.pow(2) as f64 * pen_image[[k, *x, *y]])
+                        .sum::<f64>();
 
-                    let radius = hull
+                    let x = second_order_x / density;
+                    let y = 2.0 * (second_order_xy / density);
+                    let z = second_order_y / density;
+                    let phi = y.atan2(x - z) * 0.5;
+                    let phi_vector = vector(phi.cos(), phi.sin());
+                    let phi_line = Line {
+                        point: centroid,
+                        vector: phi_vector,
+                    };
+
+                    let hull = hull::convex_hull(&points);
+                    let edge_vectors = hull
                         .iter()
                         .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-                        .map(|(from, to)| {
+                        .filter_map(|(from, to)| {
                             let edge = LineSegment {
                                 from: point(from[0] as f64, from[1] as f64),
                                 to: point(to[0] as f64, to[1] as f64),
-                            }
-                            .to_line();
-                            edge.distance_to_point(&point(centroid[0] as f64, centroid[1] as f64))
-                        })
-                        .min_by(|a, b| a.partial_cmp(&b).unwrap())
-                        .unwrap();
-
-                    if let Some((centroid_to_vertex, centroid_to_edge)) = hull
-                        .iter()
-                        .filter_map(|vertex| {
-                            let centroid_to_vertex = LineSegment {
-                                from: point(centroid[0] as f64, centroid[1] as f64),
-                                to: point(vertex[0] as f64, vertex[1] as f64),
                             };
-                            let line = centroid_to_vertex.to_line();
 
-                            hull.iter()
-                                .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-                                .filter(|(from, to)| *from != vertex && *to != vertex)
-                                .filter_map(|(from, to)| {
-                                    let edge = LineSegment {
-                                        from: point(from[0] as f64, from[1] as f64),
-                                        to: point(to[0] as f64, to[1] as f64),
-                                    };
-                                    edge.line_intersection(&line)
+                            edge.line_intersection(&phi_line)
+                                .map(|intersection| LineSegment {
+                                    from: centroid,
+                                    to: intersection,
                                 })
-                                .map(|opposite_edge_intersection| LineSegment {
-                                    from: centroid_to_vertex.from,
-                                    to: opposite_edge_intersection,
-                                })
-                                .map(|centroid_to_edge| (centroid_to_vertex, centroid_to_edge))
-                                .next()
                         })
-                        .max_by(|(a1, a2): &(LineSegment<f64>, LineSegment<f64>), (b1, b2): &(LineSegment<f64>, LineSegment<f64>)| {
-                            a1.length()
-                                .min(a2.length())
-                                .partial_cmp(&b1.length().min(b2.length()))
-                                .unwrap()
-                        })
-                    {
-                        let left =
-                            centroid_to_vertex.sample(radius / 2. / centroid_to_vertex.length()).try_cast::<usize>();
-                        let right =
-                            centroid_to_edge.sample(radius / 2. / centroid_to_edge.length()).try_cast::<usize>();
-                        if let Some((left, right)) = left.zip(right) {
-                            new_sites.push(left.to_array());
-                            new_sites.push(right.to_array());
-                            changed = true;
+                        .collect::<Vec<_>>();
+                    let [left, right] =
+                        if let [left_to_edge, right_to_edge, ..] = 
+                        edge_vectors.as_slice() {
+                            [left_to_edge.sample(0.5), right_to_edge.sample(0.5)]
                         } else {
-                            new_sites.push(centroid);
-                        }
+                            let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
+
+                            [
+                                (centroid + phi_vector * radius),
+                                (centroid - phi_vector * radius),
+                            ]
+                        };
+
+                    let zero = point(0., 0.);
+                    let upper_bound = point(
+                        (pen_image.shape()[1] - 1) as f64,
+                        (pen_image.shape()[2] - 1) as f64,
+                    );
+                    if let Some((left, right)) = left
+                        .clamp(zero, upper_bound)
+                        .try_cast::<usize>()
+                        .zip(right.clamp(zero, upper_bound).try_cast::<usize>())
+                        .map(|(left, right)| (left.to_array(), right.to_array()))
+                    {
+                        changed = true;
+                        new_sites.push(left);
+                        new_sites.push(right);
                     } else {
-                        warn!("unable to split but it wants to be, moving to centroid instead");
-                        new_sites.push(centroid);
+                        warn!("could not split: {:?} {:?}", left, right);
+                        new_sites.push(centroid.cast::<usize>().to_array());
                     }
                 }
             }
 
-            debug!("Check stopping condition (points: {})", new_sites.len());
+            debug!(
+                "Check stopping condition (iteration = {}, points: {})",
+                iteration,
+                new_sites.len()
+            );
             voronoi_sites = new_sites;
             if !changed {
                 break;

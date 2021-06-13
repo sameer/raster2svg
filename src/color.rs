@@ -1,5 +1,3 @@
-use lyon_geom::Angle;
-use lyon_geom::vector;
 use ndarray::prelude::*;
 use ndarray::Array3;
 
