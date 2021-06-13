@@ -6,6 +6,7 @@ Convert raster graphics into stylistic art renderings. The output of this progra
 
 1. Image preprocessing
     * Derive key (black) using D50 illumination lightness (D65 sRGB to D50 CIELAB)
+    * Derive colors by vector projection onto CIELAB or HSL hue + chroma
     * Square pixel values
 1. Do Linde-Buzo-Gray stippling
     * Find Voronoi tesselation with Jump flooding algorithm (JFA)
