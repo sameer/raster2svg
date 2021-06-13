@@ -71,3 +71,6 @@ There are also some noteworthy papers that while interesting did not directly in
 * Hilbert halftone art: https://possiblywrong.wordpress.com/2017/12/26/hilbert-halftone-art/
 * Abstracting images into continuous-line artistic styles https://sci-hub.st/https://doi.org/10.1007/s00371-013-0809-1
 * A Graph‐based Approach to Continuous Line Illustrations with Variable Levels of Detail https://www.u-aizu.ac.jp/~shigeo/pdf/pg2011c-preprint.pdf
+* Depth-aware coherent line drawings https://kops.uni-konstanz.de/bitstream/123456789/32742/1/Spicker_0-307233.pdf
+* Hamiltonian cycle art: Surface covering wire sculptures and duotone surfaces http://people.tamu.edu/~ergun/research/topology/papers/candg12.pdf
+* Generating Color Scribble Images using Multi‐layered Monochromatic Strokes Dithering http://cgv.cs.nthu.edu.tw/~seanyhl/project/ColorScribbleArt/MLMSD_eg19.pdf

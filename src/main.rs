@@ -1,7 +1,8 @@
-use cairo::Context;
+use cairo::{Context, LineCap};
+use color::{ciexyz_to_cielab, srgb_to_ciexyz, srgb_to_hsl};
 use image::io::Reader as ImageReader;
 use log::*;
-use lyon_geom::{point, LineSegment};
+use lyon_geom::{euclid::Vector2D, point, vector, Angle, LineSegment};
 use ndarray::prelude::*;
 use num_traits::PrimInt;
 use spade::delaunay::IntDelaunayTriangulation;
@@ -9,12 +10,14 @@ use std::{
     env,
     io::{self, Read},
     path::PathBuf,
+    str::FromStr,
     vec,
 };
 use structopt::StructOpt;
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
+mod color;
 mod hull;
 mod mst;
 mod tsp;
@@ -34,14 +37,31 @@ struct Opt {
     #[structopt(long, default_value = "1 mm")]
     pen_diameter: Length,
 
+    #[structopt(long, default_value = "CIELAB")]
+    color_model: ColorModel,
+
     /// Output file path (overwrites old files), else writes to stdout
     #[structopt(short, long)]
     out: Option<PathBuf>,
 }
 
-const RED: [f64; 3] = [1., 0., 0.];
-const GREEN: [f64; 3] = [0., 1., 0.];
-const BLUE: [f64; 3] = [0., 0., 1.];
+#[derive(Debug)]
+enum ColorModel {
+    Hsl,
+    Cielab,
+}
+
+impl FromStr for ColorModel {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "HSL" => Ok(ColorModel::Hsl),
+            "CIELAB" => Ok(ColorModel::Cielab),
+            _ => Err("only valid models are HSL or CIELAB"),
+        }
+    }
+}
 
 fn main() -> io::Result<()> {
     if env::var("RUST_LOG").is_err() {
@@ -75,72 +95,65 @@ fn main() -> io::Result<()> {
         .unwrap()
         .reversed_axes();
 
-        let mut pen_image = Array::zeros((0, image.shape()[1], image.shape()[2]));
+        let image_in_cielab = ciexyz_to_cielab(&srgb_to_ciexyz(&image));
+        let image_in_hsl = srgb_to_hsl(&image);
+        let mut pen_image: Array3<f64> =
+            Array::zeros((4, image_in_cielab.shape()[1], image_in_cielab.shape()[2]));
 
-        [RED, GREEN, BLUE].iter().for_each(|color| {
+        // Key
+        {
             pen_image
-                .push(
-                    Axis(0),
-                    image
-                        .map_axis(Axis(0), |pixel| {
-                            1. - pixel
-                                .iter()
-                                .zip(color)
-                                .map(|(x1, x2)| (x1 - x2).powi(2))
-                                .sum::<f64>()
-                                .sqrt()
-                                / 3.0_f64.sqrt()
-
-                            // pixel.iter().zip(color).map(|(x1, x2)| x1 * x2).sum::<f64>()
-                        })
-                        .view(),
-                )
-                .unwrap();
-        });
-
-        // Add inverse lightness from D65 sRGB to D50 CIE XYZ to D50 CIE LAB
-        pen_image
-            .push(
-                Axis(0),
-                image
-                    .map_axis(Axis(0), |pixel| {
-                        const LUMINANCE_COEFFICIENTS: [f64; 3] = [0.2225045, 0.7168786, 0.0606169];
-                        let y = pixel
-                            .iter()
-                            .copied()
-                            .map(|component| {
-                                if component <= 0.04045 {
-                                    component / 12.92
-                                } else {
-                                    ((component + 0.055) / 1.055).powf(2.4)
-                                }
-                            })
-                            .zip(&LUMINANCE_COEFFICIENTS)
-                            .map(|(component, coefficient)| component * coefficient)
-                            .sum::<f64>()
-                            .clamp(0., LUMINANCE_COEFFICIENTS.iter().sum());
-
-                        const DELTA: f64 = 6. / 29.;
-                        let l =
-                            116. * if y > DELTA.powi(3) {
-                                y.cbrt()
-                            } else {
-                                y / (3. * DELTA.powi(2)) + 4. / 29.
-                            } - 16.;
-
-                        1. - (l.clamp(0., 100.) / 100.)
-                    })
-                    .view(),
-            )
-            .unwrap();
-
-        for k in 0..pen_image.shape()[0] {
-            for j in 0..pen_image.shape()[2] {
-                for i in 0..pen_image.shape()[1] {
-                    pen_image[[k, i, j]] = pen_image[[k, i, j]].powi(2);
-                }
-            }
+                .slice_mut(s![3, .., ..])
+                .assign(&image_in_cielab.slice(s![0, .., ..]));
+            pen_image.slice_mut(s![3, .., ..]).mapv_inplace(|v| 1.0 - v);
         }
+        // RGB
+        match opt.color_model {
+            ColorModel::Cielab => [
+                vector(80.81351675261305, 69.88458436386973),
+                vector(-79.28626260990568, 80.98938522093422),
+                vector(68.29938535880123, -112.03112368261236),
+            ]
+            .iter()
+            .enumerate()
+            .for_each(|(i, color)| {
+                pen_image
+                    .slice_mut(s![i, .., ..])
+                    .assign(&image_in_cielab.map_axis(Axis(0), |lab| {
+                        let hue = vector(lab[1], lab[2]);
+                        let angle = hue.angle_to(*color);
+                        if angle.radians.abs() > std::f64::consts::FRAC_PI_2 {
+                            0.0
+                        } else {
+                            hue.project_onto_vector(*color).length() / color.length()
+                        }
+                    }));
+            }),
+            ColorModel::Hsl => [
+                vector(1.0, 0.0),
+                vector(-0.5, 3.0f64.sqrt() / 2.0),
+                vector(-0.5, -3.0f64.sqrt() / 2.0),
+            ]
+            .iter()
+            .enumerate()
+            .for_each(|(i, color)| {
+                pen_image
+                    .slice_mut(s![i, .., ..])
+                    .assign(&image_in_hsl.map_axis(Axis(0), |hsl| {
+                        let (sin, cos) = hsl[0].sin_cos();
+                        let hue_vector = vector(cos, sin) * hsl[1];
+                        if hue_vector.angle_to(*color).radians.abs() > std::f64::consts::FRAC_PI_2 {
+                            0.0
+                        } else {
+                            hue_vector.project_onto_vector(*color).length() * hsl[2]
+                        }
+                    }));
+            }),
+        }
+
+        // Linearize color mapping for line drawings
+        pen_image.mapv_inplace(|v| v.powi(2));
+
         pen_image
     };
 
@@ -164,19 +177,23 @@ fn main() -> io::Result<()> {
     ctx.fill();
 
     ctx.set_line_width(pen_diameter);
+    ctx.set_line_cap(LineCap::Round);
     // Makes life easier to work with the same coords as the image
     ctx.scale(
         width / pen_image.shape()[1] as f64,
         height / pen_image.shape()[2] as f64,
     );
 
-    for k in [3usize].iter().copied() {
+    for k in [0, 2, 3].iter().copied::<usize>() {
         info!("Processing {}", k);
         let mut voronoi_sites = vec![[pen_image.shape()[1] / 2, pen_image.shape()[2] / 2]];
 
         let initial_hysteresis = 0.6;
         let hysteresis_delta = 0.01;
         for iteration in 0..50 {
+            if voronoi_sites.is_empty() {
+                break;
+            }
             debug!("Jump flooding voronoi");
             let colored_pixels = voronoi::jump_flooding_voronoi(
                 &voronoi_sites,
@@ -279,7 +296,7 @@ fn main() -> io::Result<()> {
                                 .map(|centroid_to_edge| (centroid_to_vertex, centroid_to_edge))
                                 .next()
                         })
-                        .max_by(|(a1, a2), (b1, b2)| {
+                        .max_by(|(a1, a2): &(LineSegment<f64>, LineSegment<f64>), (b1, b2): &(LineSegment<f64>, LineSegment<f64>)| {
                             a1.length()
                                 .min(a2.length())
                                 .partial_cmp(&b1.length().min(b2.length()))
@@ -287,12 +304,16 @@ fn main() -> io::Result<()> {
                         })
                     {
                         let left =
-                            centroid_to_vertex.sample(radius / 2. / centroid_to_vertex.length());
+                            centroid_to_vertex.sample(radius / 2. / centroid_to_vertex.length()).try_cast::<usize>();
                         let right =
-                            centroid_to_edge.sample(radius / 2. / centroid_to_edge.length());
-                        new_sites.push(left.to_usize().to_array());
-                        new_sites.push(right.to_usize().to_array());
-                        changed = true;
+                            centroid_to_edge.sample(radius / 2. / centroid_to_edge.length()).try_cast::<usize>();
+                        if let Some((left, right)) = left.zip(right) {
+                            new_sites.push(left.to_array());
+                            new_sites.push(right.to_array());
+                            changed = true;
+                        } else {
+                            new_sites.push(centroid);
+                        }
                     } else {
                         warn!("unable to split but it wants to be, moving to centroid instead");
                         new_sites.push(centroid);
@@ -348,8 +369,8 @@ fn main() -> io::Result<()> {
         // }
 
         // for point in voronoi_sites {
-        //     ctx.move_to(point[0] as f64 - 0.5, point[1] as f64 - 0.5);
-        //     ctx.line_to(point[0] as f64 + 0.5, point[1] as f64 + 0.5);
+        //     ctx.move_to(point[0] as f64, point[1] as f64);
+        //     ctx.arc(point[0] as f64, point[1] as f64, pen_diameter / 2., 0., 2. * std::f64::consts::PI);
         //     ctx.stroke();
         // }
 
@@ -378,4 +399,39 @@ fn abs_distance_squared<T: PrimInt>(a: [T; 2], b: [T; 2]) -> T {
         b[1] - a[1]
     };
     x_diff.pow(2).saturating_add(y_diff.pow(2))
+}
+
+#[cfg(test)]
+#[test]
+fn ramp_to_average() {
+    // let image = ImageReader::open("ramp_sites_corrected.png")
+    //     .unwrap()
+    //     .decode()
+    //     .expect("not an image")
+    //     .to_rgb16();
+
+    // let image = Array::from_iter(
+    //     image
+    //         .pixels()
+    //         .map(|p| p.0.iter().copied())
+    //         .flatten()
+    //         .map(|p| p as f64 / u16::MAX as f64),
+    // )
+    // .into_shape((image.height() as usize, image.width() as usize, 3))
+    // .unwrap()
+    // .reversed_axes();
+    // println!(
+    //     "{:?}",
+    //     (0..5120)
+    //         .map(|x| {
+    //             let mut sum = 0.0f64;
+    //             for i in 10 * x..10 * (x + 1) {
+    //                 for j in 0..2000 {
+    //                     sum += image[[0, i, j]];
+    //                 }
+    //             }
+    //             sum / (2000. * 10.)
+    //         })
+    //         .collect::<Vec<_>>()
+    // );
 }
