@@ -38,6 +38,7 @@ Notice for lawyers: no papers are hosted here, they are all provided by the auth
 * Weighted Linde-Buzo-Gray Stippling http://graphics.uni-konstanz.de/publikationen/Deussen2017LindeBuzoGray/WeightedLindeBuzoGrayStippling_authorversion.pdf
 * Linking soft computing to art introduction of efficient k-continuous line drawing https://ieyjzhou.github.io/CIEG/Paper/KCLD_2018_Published_Version.pdf
 * Andrew's monotone chain convex hull algorithm https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain
+* Halftoning and Stippling http://graphics.uni-konstanz.de/publikationen/Deussen2013HalftoningStippling/Deussen2013HalftoningStippling.pdf
 
 ### Voronoi Diagram
 
