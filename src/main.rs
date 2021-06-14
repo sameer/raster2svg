@@ -1,4 +1,4 @@
-use cairo::{Context, LineCap};
+use cairo::{Context, LineCap, Matrix};
 use color::{ciexyz_to_cielab, srgb_to_ciexyz, srgb_to_hsl};
 use image::io::Reader as ImageReader;
 use log::*;
@@ -47,6 +47,7 @@ struct Opt {
     )]
     color_model: ColorModel,
 
+    // SVG drawing style
     #[structopt(
         long,
         default_value = "mst",
@@ -55,6 +56,7 @@ struct Opt {
     )]
     style: Style,
 
+    // Super-sampling factor
     #[structopt(long, default_value = "1")]
     super_sample: usize,
 
@@ -210,12 +212,7 @@ fn main() -> io::Result<()> {
 
         // Linearize color mapping for line drawings
         if matches!(opt.style, Style::Tsp | Style::Mst) {
-            pen_image
-                .slice_mut(s![3, .., ..])
-                .mapv_inplace(|v| v.powi(2));
-            pen_image
-                .slice_mut(s![0..3, .., ..])
-                .mapv_inplace(|v| v.powf(1.5));
+            pen_image.mapv_inplace(|v| v.powi(2));
         } else if matches!(opt.style, Style::Triangulation) {
             pen_image.mapv_inplace(|v| v.powi(3));
         }
@@ -244,14 +241,9 @@ fn main() -> io::Result<()> {
 
     ctx.set_line_cap(LineCap::Round);
     ctx.set_line_join(cairo::LineJoin::Round);
-    // Makes life easier to work with the same coords as the image
-    ctx.scale(
-        1.0 / dots_per_mm / opt.super_sample as f64,
-        1.0 / dots_per_mm / opt.super_sample as f64,
-    );
-    ctx.set_line_width(pen_diameter as f64);
+    ctx.set_line_width(pen_diameter);
 
-    for k in [0, 2, 3].iter().copied::<usize>() {
+    for k in [0, 1, 2, 3].iter().copied::<usize>() {
         info!("Processing {}", k);
         let mut voronoi_sites = vec![[
             (pen_image.shape()[1] / 2) as i64,
@@ -457,6 +449,10 @@ fn main() -> io::Result<()> {
             Style::Stipple => {
                 debug!("Draw to svg");
                 for point in voronoi_sites {
+                    ctx.scale(
+                        1.0 / dots_per_mm / opt.super_sample as f64,
+                        1.0 / dots_per_mm / opt.super_sample as f64,
+                    );
                     ctx.move_to(point[0] as f64, point[1] as f64);
                     ctx.arc(
                         point[0] as f64,
@@ -465,6 +461,7 @@ fn main() -> io::Result<()> {
                         0.,
                         std::f64::consts::TAU,
                     );
+                    ctx.set_matrix(Matrix::identity());
                     ctx.fill();
                 }
             }
@@ -479,29 +476,50 @@ fn main() -> io::Result<()> {
                     for edge in delaunay.edges() {
                         let from: &[i64; 2] = &edge.from();
                         let to: &[i64; 2] = &edge.to();
+
+                        ctx.scale(
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                        );
                         ctx.move_to(from[0] as f64, from[1] as f64);
                         ctx.line_to(to[0] as f64, to[1] as f64);
+                        ctx.set_matrix(Matrix::identity());
                         ctx.stroke();
                     }
                 } else {
                     let tree = crate::mst::compute_mst(&voronoi_sites, &delaunay);
                     if let Style::Mst = opt.style {
                         debug!("Draw to svg");
+                        ctx.scale(
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                        );
                         ctx.move_to(tree[0][0][0] as f64, tree[0][0][1] as f64);
+                        ctx.set_matrix(Matrix::identity());
                         for edge in &tree {
+                            ctx.scale(
+                                1.0 / dots_per_mm / opt.super_sample as f64,
+                                1.0 / dots_per_mm / opt.super_sample as f64,
+                            );
                             ctx.move_to(edge[0][0] as f64, edge[0][1] as f64);
                             ctx.line_to(edge[1][0] as f64, edge[1][1] as f64);
+                            ctx.set_matrix(Matrix::identity());
                             ctx.stroke();
                         }
                     } else {
                         let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_sites, &tree);
                         debug!("Draw to svg");
+                        ctx.scale(
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                        );
                         if let Some(first) = tsp.first() {
                             ctx.move_to(first[0] as f64, first[1] as f64);
                         }
                         for next in tsp.iter().skip(1) {
                             ctx.line_to(next[0] as f64, next[1] as f64);
                         }
+                        ctx.set_matrix(Matrix::identity());
                         ctx.stroke();
                     }
                 }
