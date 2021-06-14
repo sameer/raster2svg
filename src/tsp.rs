@@ -245,7 +245,7 @@ impl Distribution<Operator> for Standard {
 
 /// Local improvement of an open loop TSP solution using the relocate, disentangle, 2-opt, and link swap operators.
 ///
-/// Uses simulated annealing noise in the first half of iterations for hill-climbing.
+/// Uses random sampling when the path is too long for brute force search.
 ///
 /// https://www.mdpi.com/2076-3417/9/19/3985/pdf
 ///
@@ -274,8 +274,6 @@ fn local_improvement<
     let should_sample = path.len() > 2000;
     const ITERATIONS: usize = 20000;
 
-    // Right now this doesn't do anything,
-    // but there may be a good early stopping technique that could use it.
     let mut stuck_by_operator = [
         Operator::Relocate,
         Operator::Disentangle,
