@@ -17,9 +17,15 @@ uom = "0.31"
 ndarray = { version = "0.15" }
 rand = { version = "0.8", features = ["alloc"] }
 spade = "1.8"
-fxhash = "0.2"
+rustc-hash = "1.1"
 num-traits = "0.2"
 lyon_geom = "0.17"
+bitvec = "0.22"
+paste = "1"
 
 [dev-dependencies]
 pretty_assertions = "0.7"
+
+[profile.release]
+debug = true
+

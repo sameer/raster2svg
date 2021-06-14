@@ -1,7 +1,7 @@
-use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use num_traits::{FromPrimitive, PrimInt};
+use num_traits::{FromPrimitive, PrimInt, Signed};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use spade::delaunay::{DelaunayTreeLocate, IntDelaunayTriangulation};
-use std::{cmp::Reverse, collections::BinaryHeap};
+use std::{cmp::Reverse, collections::BinaryHeap, fmt::Debug, hash::Hash};
 
 #[derive(PartialEq, Eq, Hash)]
 struct PriorityQueueEdge<T: PrimInt + PartialEq + Eq + PartialOrd + Ord> {
@@ -9,7 +9,9 @@ struct PriorityQueueEdge<T: PrimInt + PartialEq + Eq + PartialOrd + Ord> {
     to: [T; 2],
 }
 
-impl<T: PrimInt + PartialEq + Eq + PartialOrd + Ord> PartialOrd for PriorityQueueEdge<T> {
+impl<T: PrimInt + Signed + PartialEq + Eq + PartialOrd + Ord + Debug> PartialOrd
+    for PriorityQueueEdge<T>
+{
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(
             crate::abs_distance_squared(self.from, self.to)
@@ -18,7 +20,7 @@ impl<T: PrimInt + PartialEq + Eq + PartialOrd + Ord> PartialOrd for PriorityQueu
     }
 }
 
-impl<T: PrimInt + PartialEq + Eq + PartialOrd + Ord> Ord for PriorityQueueEdge<T> {
+impl<T: PrimInt + Signed + PartialEq + Eq + PartialOrd + Ord + Debug> Ord for PriorityQueueEdge<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.partial_cmp(other).unwrap()
     }
@@ -32,7 +34,7 @@ pub fn compute_mst<T>(
     delaunay: &IntDelaunayTriangulation<[i64; 2], DelaunayTreeLocate<[i64; 2]>>,
 ) -> Vec<[[T; 2]; 2]>
 where
-    T: PrimInt + FromPrimitive + std::hash::Hash,
+    T: PrimInt + Signed + FromPrimitive + Hash + Debug,
 {
     let mut edges_by_vertex: HashMap<[T; 2], Vec<PriorityQueueEdge<T>>> = HashMap::default();
     delaunay.edges().for_each(|edge| {

@@ -1,8 +1,8 @@
 use crate::abs_distance_squared;
 use bitvec::prelude::*;
-use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use num_traits::{FromPrimitive, PrimInt};
+use num_traits::{FromPrimitive, PrimInt, Signed};
 use rand::{distributions::Standard, prelude::Distribution, thread_rng, Rng};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::{fmt::Debug, hash::Hash, iter::Sum};
 
 #[derive(PartialEq, Eq, Debug)]
@@ -26,35 +26,6 @@ impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> Ord for Edge<T> {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
-struct RemoveAddEdgePair<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> {
-    original_edge: [[T; 2]; 2],
-    new_edge: [[T; 2]; 2],
-}
-
-impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> RemoveAddEdgePair<T> {
-    /// Best improvement to the tree (greatest reduction or smallest increase in length)
-    ///
-    /// Note that this saturates to 0 for unsized integers but does not affect the
-    /// algorithm because we are looking for maxima.
-    fn diff(&self) -> T {
-        abs_distance_squared(self.original_edge[0], self.original_edge[1])
-            .saturating_sub(abs_distance_squared(self.new_edge[0], self.new_edge[1]))
-    }
-}
-
-impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> PartialOrd for RemoveAddEdgePair<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.diff().partial_cmp(&other.diff())
-    }
-}
-
-impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> Ord for RemoveAddEdgePair<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.diff().cmp(&other.diff())
-    }
-}
-
 /// Approximate an open loop TSP solution by way of greedy branch elimination + local improvement.
 ///
 /// http://cs.uef.fi/sipu/pub/applsci-11-00177.pdf
@@ -66,7 +37,7 @@ impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> Ord for RemoveAddEd
 /// TODO: consider using the Christofides algorithm which has a bound on the length of the worst path.
 /// The initial solution of greedy branch elimination is actually quite bad.
 pub fn approximate_tsp_with_mst<
-    T: PrimInt + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
+    T: PrimInt + Signed + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
 >(
     vertices: &[[T; 2]],
     tree: &[[[T; 2]; 2]],
@@ -279,7 +250,7 @@ impl Distribution<Operator> for Standard {
 /// https://www.mdpi.com/2076-3417/9/19/3985/pdf
 ///
 fn local_improvement<
-    T: PrimInt + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
+    T: PrimInt + Signed + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
 >(
     path: &[[T; 2]],
 ) -> Vec<[T; 2]> {
@@ -291,8 +262,12 @@ fn local_improvement<
         .sum::<T>();
 
     let mut current = best.clone();
-    let mut current_sum;
-    let mut simulated_annealing_noise_min = 0.;
+    let mut current_distances = current
+        .iter()
+        .zip(current.iter().skip(1))
+        .map(|(from, to)| abs_distance_squared(*from, *to))
+        .collect::<Vec<_>>();
+    let mut current_sum = best_sum;
     let mut rng = thread_rng();
 
     let sample_count = (current.len() as f64 * 0.001) as usize;
@@ -311,283 +286,249 @@ fn local_improvement<
     .map(|operator| (*operator, false))
     .collect::<HashMap<_, _>>();
 
-    // TODO: fix bug where annealing doesn't work because of skipping diffs that are less than 0
     for idx in 0..ITERATIONS {
-        let operator: Operator = rng.gen();
-        let is_annealing = idx < ITERATIONS / 2;
-        if !should_sample && !is_annealing && stuck_by_operator.values().all(|x| *x) {
+        if stuck_by_operator.values().all(|x| *x) && !should_sample {
             break;
         }
+
+        let operator: Operator = rng.gen();
+
         match operator {
+            // v^2
             Operator::Relocate => {
-                let mut relocates = if should_sample {
-                    (0..sample_count)
-                        .map(|_| rng.gen_range(1..current.len().saturating_sub(1)))
-                        .collect::<Vec<_>>()
+                let relocates = if should_sample {
+                    0..sample_count
                 } else {
-                    (1..current.len().saturating_sub(1)).collect::<Vec<_>>()
-                };
+                    1..current.len().saturating_sub(1)
+                }
+                .map(|i| {
+                    if should_sample {
+                        rng.gen_range(1..current.len().saturating_sub(1))
+                    } else {
+                        i
+                    }
+                });
+
                 // move i between j and j+1
-                if let Some((i, j, diff)) = relocates
-                    .drain(..)
+                let best = relocates
                     .map(|i| {
                         (0..=i.saturating_sub(2))
-                            .chain((i.saturating_add(2)..current.len()).map(|j| j - 1))
+                            .chain(i.saturating_add(1)..current.len().saturating_sub(1))
                             .map(move |j| (i, j))
                     })
                     .flatten()
                     .map(|(i, j)| {
-                        let positive_diff = abs_distance_squared(current[j], current[j + 1])
-                            + abs_distance_squared(current[i - 1], current[i])
-                            + abs_distance_squared(current[i], current[i + 1]);
+                        let positive_diff =
+                            current_distances[j] + current_distances[i - 1] + current_distances[i];
                         let negative_diff = abs_distance_squared(current[i - 1], current[i + 1])
                             + abs_distance_squared(current[i], current[j])
                             + abs_distance_squared(current[i], current[j + 1]);
+                        (i, j, positive_diff.saturating_sub(negative_diff))
+                    })
+                    .max_by_key(|(.., diff)| *diff);
 
-                        let diff = positive_diff.saturating_sub(negative_diff);
-                        (i, j, diff)
-                    })
-                    .max_by_key(|(_, _, diff)| {
-                        if is_annealing {
-                            T::from_f64(
-                                diff.to_f64().unwrap()
-                                    * rng.gen_range(simulated_annealing_noise_min..=1.),
-                            )
-                            .unwrap()
-                        } else {
-                            *diff
-                        }
-                    })
-                {
+                if let Some((i, j, diff)) = best {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
                         continue;
                     } else {
-                        *stuck_by_operator.get_mut(&operator).unwrap() = false;
+                        stuck_by_operator
+                            .values_mut()
+                            .for_each(|stuck| *stuck = false);
                     }
-
-                    let vertex = current.remove(i);
+                    let vertex = current[i];
                     if j + 1 < i {
-                        current.insert(j + 1, vertex);
+                        for idx in (j + 1..i).rev() {
+                            current[idx + 1] = current[idx];
+                        }
+                        current[j + 1] = vertex;
                     } else {
-                        // everything got shifted to the left so it's 1 less
-                        current.insert(j, vertex);
+                        for idx in i..j {
+                            current[idx] = current[idx + 1];
+                        }
+                        current[j] = vertex;
                     }
                 }
             }
+            // v^2
             Operator::Disentangle => {
-                let mut swaps = if should_sample {
-                    (0..sample_count)
-                        .map(|_| rng.gen_range(0..current.len()))
-                        .collect::<Vec<_>>()
+                let swaps = if should_sample {
+                    0..sample_count
                 } else {
-                    (0..current.len()).collect::<Vec<_>>()
-                };
+                    0..current.len()
+                }
+                .map(|i| {
+                    if should_sample {
+                        rng.gen_range(0..current.len())
+                    } else {
+                        i
+                    }
+                });
                 // swap i and j
-                if let Some((i, j, diff)) = swaps
-                    .drain(..)
+                let best = swaps
                     .map(|i| {
                         (0..i.saturating_sub(1))
                             .map(move |j| (j, i))
-                            .chain((i.saturating_add(2)..current.len()).map(move |j| (i, j)))
+                            .filter(|_| should_sample)
+                            .chain((i.saturating_add(1)..current.len()).map(move |j| (i, j)))
                     })
                     .flatten()
                     .map(|(i, j)| {
                         let mut positive_diff = T::zero();
                         let mut negative_diff = T::zero();
                         if i != 0 {
-                            positive_diff =
-                                positive_diff + abs_distance_squared(current[i - 1], current[i]);
+                            positive_diff = positive_diff + current_distances[i - 1];
                             negative_diff =
                                 negative_diff + abs_distance_squared(current[i - 1], current[j]);
                         }
-                        positive_diff =
-                            positive_diff + abs_distance_squared(current[i], current[i + 1]);
-                        negative_diff =
-                            negative_diff + abs_distance_squared(current[j], current[i + 1]);
-                        positive_diff =
-                            positive_diff + abs_distance_squared(current[j - 1], current[j]);
-                        negative_diff =
-                            negative_diff + abs_distance_squared(current[j - 1], current[i]);
+                        if i + 1 != j {
+                            positive_diff = positive_diff + current_distances[i];
+                            negative_diff =
+                                negative_diff + abs_distance_squared(current[j], current[i + 1]);
+                            positive_diff = positive_diff + current_distances[j - 1];
+                            negative_diff =
+                                negative_diff + abs_distance_squared(current[j - 1], current[i]);
+                        }
                         if j + 1 != current.len() {
-                            positive_diff =
-                                positive_diff + abs_distance_squared(current[j], current[j + 1]);
+                            positive_diff = positive_diff + current_distances[j];
                             negative_diff =
                                 negative_diff + abs_distance_squared(current[i], current[j + 1]);
                         }
                         let diff = positive_diff.saturating_sub(negative_diff);
                         (i, j, diff)
                     })
-                    .max_by_key(|(_, _, diff)| {
-                        if is_annealing {
-                            T::from_f64(
-                                diff.to_f64().unwrap()
-                                    * rng.gen_range(simulated_annealing_noise_min..=1.),
-                            )
-                            .unwrap()
-                        } else {
-                            *diff
-                        }
-                    })
-                {
+                    .max_by_key(|(.., diff)| *diff);
+
+                if let Some((i, j, diff)) = best {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
                         continue;
                     } else {
-                        *stuck_by_operator.get_mut(&operator).unwrap() = false;
+                        stuck_by_operator
+                            .values_mut()
+                            .for_each(|stuck| *stuck = false);
                     }
 
                     current.swap(i, j);
                 }
             }
+            // v^2
             Operator::TwoOpt => {
-                let mut edges = if should_sample {
-                    (0..sample_count)
-                        .map(|_| {
-                            let i = rng.gen_range(0..current.len().saturating_sub(1));
-                            let j = i.saturating_add(1);
-                            (i, j)
-                        })
-                        .collect::<Vec<_>>()
+                let edges = if should_sample {
+                    0..sample_count
                 } else {
-                    (0..current.len().saturating_sub(1))
-                        .map(|i| (i, i.saturating_add(1)))
-                        .collect::<Vec<_>>()
-                };
+                    0..current.len().saturating_sub(1)
+                }
+                .map(|i| {
+                    let i = if should_sample {
+                        rng.gen_range(0..current.len().saturating_sub(1))
+                    } else {
+                        i
+                    };
+                    (i, i.saturating_add(1))
+                });
                 // permute the points of the this and other edges
-                if let Some((this, other, diff)) = edges
-                    .drain(..)
+                let best = edges
                     .map(|(i, j)| {
-                        (0..i).zip(1..i).map(move |other| (other, (i, j))).chain(
-                            (j.saturating_add(1)..current.len())
-                                .zip(j.saturating_add(2)..current.len())
-                                .map(move |other| ((i, j), other)),
-                        )
+                        (0..i)
+                            .zip(1..i)
+                            .map(move |other| (other, (i, j)))
+                            .filter(|_| should_sample)
+                            .chain(
+                                (j.saturating_add(1)..current.len())
+                                    .zip(j.saturating_add(2)..current.len())
+                                    .map(move |other| ((i, j), other)),
+                            )
                     })
                     .flatten()
                     .map(|(this, other)| {
                         (
                             this,
                             other,
-                            (abs_distance_squared(current[this.0], current[this.1])
-                                + abs_distance_squared(current[other.0], current[other.1]))
-                            .saturating_sub(
-                                abs_distance_squared(current[this.0], current[other.0])
-                                    + abs_distance_squared(current[this.1], current[other.1]),
-                            ),
+                            (current_distances[this.0] + current_distances[other.0])
+                                .saturating_sub(
+                                    abs_distance_squared(current[this.0], current[other.0])
+                                        + abs_distance_squared(current[this.1], current[other.1]),
+                                ),
                         )
                     })
-                    .max_by_key(|(_, _, diff)| {
-                        if is_annealing {
-                            T::from_f64(
-                                diff.to_f64().unwrap()
-                                    * rng.gen_range(simulated_annealing_noise_min..=1.),
-                            )
-                            .unwrap()
-                        } else {
-                            *diff
-                        }
-                    })
-                {
+                    .max_by_key(|(.., diff)| *diff);
+
+                if let Some((this, other, diff)) = best {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
                         continue;
                     } else {
-                        *stuck_by_operator.get_mut(&operator).unwrap() = false;
+                        stuck_by_operator
+                            .values_mut()
+                            .for_each(|stuck| *stuck = false);
                     }
-
-                    let reversed_middle = current[this.1..=other.0]
-                        .iter()
-                        .rev()
-                        .copied()
-                        .collect::<Vec<_>>();
-                    current[this.1..=other.0]
-                        .iter_mut()
-                        .zip(reversed_middle.iter())
-                        .for_each(|(dest, origin)| *dest = *origin);
+                    current[this.1..=other.0].reverse();
                 }
             }
+            // 3v
             Operator::LinkSwap => {
                 let first = *current.first().unwrap();
                 let last = *current.last().unwrap();
 
                 // Swap the first and/or last vertex with inner vertices
-                if let Some((i, j, pair, diff)) = (0..current.len())
+                let best = (0..current.len())
                     .zip(1..current.len())
-                    .filter_map(|(i, j)| {
+                    .map(|(i, j)| {
                         let from = current[i];
                         let to = current[j];
                         [[from, last], [first, to], [first, last]]
                             .iter()
                             .map(|new_edge| {
-                                let pair = RemoveAddEdgePair {
-                                    new_edge: *new_edge,
-                                    original_edge: [from, to],
-                                };
-                                let diff = pair.diff();
-                                (i, j, pair, diff)
+                                let diff = current_distances[i]
+                                    .saturating_sub(abs_distance_squared(new_edge[0], new_edge[1]));
+                                (i, j, [from, to], *new_edge, diff)
                             })
-                            .max_by_key(|(_, _, _, diff)| *diff)
+                            .max_by_key(|(.., diff)| *diff)
                     })
-                    .max_by_key(|(_, _, _, diff)| {
-                        if is_annealing {
-                            T::from_f64(
-                                diff.to_f64().unwrap()
-                                    * rng.gen_range(simulated_annealing_noise_min..=1.),
-                            )
-                            .unwrap()
-                        } else {
-                            *diff
-                        }
-                    })
-                {
+                    .flatten()
+                    .max_by_key(|(.., diff)| *diff);
+
+                if let Some((i, j, original_edge, new_edge, diff)) = best {
                     if diff <= T::zero() {
                         *stuck_by_operator.get_mut(&operator).unwrap() = true;
                         continue;
                     } else {
-                        *stuck_by_operator.get_mut(&operator).unwrap() = false;
+                        stuck_by_operator
+                            .values_mut()
+                            .for_each(|stuck| *stuck = false);
                     }
 
-                    if pair.new_edge[0] != pair.original_edge[0] {
-                        let reversed_prefix =
-                            current[..=i].iter().rev().copied().collect::<Vec<_>>();
-                        current[..=i]
-                            .iter_mut()
-                            .zip(reversed_prefix.iter())
-                            .for_each(|(dest, origin)| *dest = *origin);
+                    if new_edge[0] != original_edge[0] {
+                        current[..=i].reverse();
                     }
-                    if pair.new_edge[1] != pair.original_edge[1] {
-                        let reversed_suffix =
-                            current[j..].iter().rev().copied().collect::<Vec<_>>();
-                        current[j..]
-                            .iter_mut()
-                            .zip(reversed_suffix.iter())
-                            .for_each(|(dest, origin)| *dest = *origin);
+                    if new_edge[1] != original_edge[1] {
+                        current[j..].reverse();
                     }
                 }
             }
         }
 
-        // let prev_sum = current_sum;
-        current_sum = current
+        let prev_sum = current_sum;
+        current_distances = current
             .iter()
             .zip(current.iter().skip(1))
             .map(|(from, to)| abs_distance_squared(*from, *to))
-            .sum::<T>();
+            .collect::<Vec<_>>();
+        current_sum = current_distances.iter().copied().sum::<T>();
 
-        // if prev_sum < current_sum {
-        //     panic!("{:?}", operator);
-        // }
+        assert!(
+            prev_sum >= current_sum,
+            "operator = {:?} prev = {:?} current = {:?}",
+            operator,
+            prev_sum,
+            current_sum
+        );
 
         dbg!(idx, current_sum, best_sum);
         if current_sum < best_sum {
             best = current.clone();
             best_sum = current_sum;
-        }
-
-        if is_annealing {
-            simulated_annealing_noise_min =
-                (simulated_annealing_noise_min + 2. / ITERATIONS as f64).clamp(0., 1.);
         }
     }
 
@@ -626,5 +567,4 @@ fn tsp_is_correct_for_nontrivial_case() {
         .map(|(from, to)| abs_distance_squared(*from, *to))
         .sum();
     assert_eq!(length, 210680);
-    assert_eq!(&path, &vertices);
 }
