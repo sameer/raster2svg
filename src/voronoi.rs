@@ -1,3 +1,7 @@
+use std::fmt::Debug;
+
+use num_traits::{FromPrimitive, PrimInt, Signed};
+
 use crate::abs_distance_squared;
 
 /// Given a set of sites in a bounding box from (0, 0) to (width, height),
@@ -5,14 +9,18 @@ use crate::abs_distance_squared;
 /// using the Jump Flooding Algorithm.
 ///
 /// https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf
-pub fn jump_flooding_voronoi(sites: &[[usize; 2]], width: usize, height: usize) -> Vec<Vec<usize>> {
+pub fn jump_flooding_voronoi<T: PrimInt + Signed + FromPrimitive + Debug>(
+    sites: &[[T; 2]],
+    width: usize,
+    height: usize,
+) -> Vec<Vec<usize>> {
     if sites.is_empty() {
         return vec![];
     }
     // use usize::MAX to represent colorless cells
     let mut grid = vec![vec![usize::MAX; width]; height];
     sites.iter().enumerate().for_each(|(color, site)| {
-        grid[site[1] as usize][site[0] as usize] = color;
+        grid[site[1].to_usize().unwrap()][site[0].to_usize().unwrap()] = color;
     });
 
     let mut round_step = (width.max(height))
@@ -49,9 +57,10 @@ pub fn jump_flooding_voronoi(sites: &[[usize; 2]], width: usize, height: usize) 
                         let new = grid[y][x];
                         if new != usize::MAX {
                             let current = grid[j][i];
+                            let here = [T::from_usize(i).unwrap(), T::from_usize(j).unwrap()];
                             if current == usize::MAX
-                                || abs_distance_squared([i, j], sites[new])
-                                    < abs_distance_squared([i, j], sites[current])
+                                || abs_distance_squared(here, sites[new])
+                                    < abs_distance_squared(here, sites[current])
                             {
                                 grid[j][i] = new;
                             }
