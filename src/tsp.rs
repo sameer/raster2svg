@@ -1,4 +1,5 @@
 use crate::abs_distance_squared;
+use bitvec::prelude::*;
 use fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use num_traits::{FromPrimitive, PrimInt};
 use rand::{distributions::Standard, prelude::Distribution, thread_rng, Rng};
@@ -123,16 +124,18 @@ pub fn approximate_tsp_with_mst<
 
         // Now there are (in theory) two disconnected trees
         // Find the two connected trees in the graph
-        let mut disconnected_tree_visited: Vec<bool> = vec![false; vertices.len()];
+        let mut disconnected_tree_visited = bitvec![0; vertices.len()];
         let mut disconnected_tree_visit_count = 1;
         {
-            disconnected_tree_visited[*vertex_to_index.get(&disconnected_node).unwrap()] = true;
+            *disconnected_tree_visited
+                .get_mut(*vertex_to_index.get(&disconnected_node).unwrap())
+                .unwrap() = true;
             let mut dfs = vec![&disconnected_node];
             while let Some(head) = dfs.pop() {
                 for adjacency in adjacency_map.get(head).unwrap() {
                     let adjacency_idx = *vertex_to_index.get(adjacency).unwrap();
                     if !disconnected_tree_visited[adjacency_idx] {
-                        disconnected_tree_visited[adjacency_idx] = true;
+                        *disconnected_tree_visited.get_mut(adjacency_idx).unwrap() = true;
                         disconnected_tree_visit_count += 1;
                         dfs.push(adjacency);
                     }
@@ -288,11 +291,12 @@ fn local_improvement<
         .sum::<T>();
 
     let mut current = best.clone();
-    let mut current_sum = best_sum;
+    let mut current_sum;
     let mut simulated_annealing_noise_min = 0.;
     let mut rng = thread_rng();
 
     let sample_count = (current.len() as f64 * 0.001) as usize;
+    let should_sample = path.len() > 2000;
     const ITERATIONS: usize = 20000;
 
     // Right now this doesn't do anything,
@@ -311,12 +315,18 @@ fn local_improvement<
     for idx in 0..ITERATIONS {
         let operator: Operator = rng.gen();
         let is_annealing = idx < ITERATIONS / 2;
-
+        if !should_sample && !is_annealing && stuck_by_operator.values().all(|x| *x) {
+            break;
+        }
         match operator {
             Operator::Relocate => {
-                let mut relocates = (0..sample_count)
-                    .map(|_| rng.gen_range(1..current.len().saturating_sub(1)))
-                    .collect::<Vec<_>>();
+                let mut relocates = if should_sample {
+                    (0..sample_count)
+                        .map(|_| rng.gen_range(1..current.len().saturating_sub(1)))
+                        .collect::<Vec<_>>()
+                } else {
+                    (1..current.len().saturating_sub(1)).collect::<Vec<_>>()
+                };
                 // move i between j and j+1
                 if let Some((i, j, diff)) = relocates
                     .drain(..)
@@ -363,20 +373,16 @@ fn local_improvement<
                         // everything got shifted to the left so it's 1 less
                         current.insert(j, vertex);
                     }
-
-                    current_sum = current_sum - diff;
-
-                    dbg!(idx, current_sum, best_sum);
-                    if current_sum < best_sum {
-                        best = current.clone();
-                        best_sum = current_sum;
-                    }
                 }
             }
             Operator::Disentangle => {
-                let mut swaps = (0..sample_count)
-                    .map(|_| rng.gen_range(0..current.len()))
-                    .collect::<Vec<_>>();
+                let mut swaps = if should_sample {
+                    (0..sample_count)
+                        .map(|_| rng.gen_range(0..current.len()))
+                        .collect::<Vec<_>>()
+                } else {
+                    (0..current.len()).collect::<Vec<_>>()
+                };
                 // swap i and j
                 if let Some((i, j, diff)) = swaps
                     .drain(..)
@@ -432,23 +438,22 @@ fn local_improvement<
                     }
 
                     current.swap(i, j);
-                    current_sum = current_sum - diff;
-
-                    dbg!(idx, current_sum, best_sum);
-                    if current_sum < best_sum {
-                        best = current.clone();
-                        best_sum = current_sum;
-                    }
                 }
             }
             Operator::TwoOpt => {
-                let mut edges = (0..sample_count)
-                    .map(|_| {
-                        let i = rng.gen_range(0..current.len().saturating_sub(1));
-                        let j = i.saturating_add(1);
-                        (i, j)
-                    })
-                    .collect::<Vec<_>>();
+                let mut edges = if should_sample {
+                    (0..sample_count)
+                        .map(|_| {
+                            let i = rng.gen_range(0..current.len().saturating_sub(1));
+                            let j = i.saturating_add(1);
+                            (i, j)
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    (0..current.len().saturating_sub(1))
+                        .map(|i| (i, i.saturating_add(1)))
+                        .collect::<Vec<_>>()
+                };
                 // permute the points of the this and other edges
                 if let Some((this, other, diff)) = edges
                     .drain(..)
@@ -500,14 +505,6 @@ fn local_improvement<
                         .iter_mut()
                         .zip(reversed_middle.iter())
                         .for_each(|(dest, origin)| *dest = *origin);
-
-                    current_sum = current_sum - diff;
-                    dbg!(idx, current_sum, best_sum);
-
-                    if current_sum < best_sum {
-                        best = current.clone();
-                        best_sum = current_sum;
-                    }
                 }
             }
             Operator::LinkSwap => {
@@ -567,17 +564,27 @@ fn local_improvement<
                             .zip(reversed_suffix.iter())
                             .for_each(|(dest, origin)| *dest = *origin);
                     }
-
-                    current_sum = current_sum - diff;
-                    dbg!(idx, diff, current_sum, best_sum);
-
-                    if current_sum < best_sum {
-                        best = current.clone();
-                        best_sum = current_sum;
-                    }
                 }
             }
         }
+
+        // let prev_sum = current_sum;
+        current_sum = current
+            .iter()
+            .zip(current.iter().skip(1))
+            .map(|(from, to)| abs_distance_squared(*from, *to))
+            .sum::<T>();
+
+        // if prev_sum < current_sum {
+        //     panic!("{:?}", operator);
+        // }
+
+        dbg!(idx, current_sum, best_sum);
+        if current_sum < best_sum {
+            best = current.clone();
+            best_sum = current_sum;
+        }
+
         if is_annealing {
             simulated_annealing_noise_min =
                 (simulated_annealing_noise_min + 2. / ITERATIONS as f64).clamp(0., 1.);
