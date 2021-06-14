@@ -8,6 +8,7 @@ use num_traits::PrimInt;
 use spade::delaunay::IntDelaunayTriangulation;
 use std::{
     env,
+    fmt::Debug,
     io::{self, Read},
     path::PathBuf,
     str::FromStr,
@@ -37,29 +38,81 @@ struct Opt {
     #[structopt(long, default_value = "1 mm")]
     pen_diameter: Length,
 
-    #[structopt(long, default_value = "CIELAB")]
+    /// Color model to use for additive coloring
+    #[structopt(
+        long,
+        default_value = "cielab",
+        possible_values = ColorModel::raw_variants(),
+        case_insensitive = true
+    )]
     color_model: ColorModel,
+
+    #[structopt(
+        long,
+        default_value = "mst",
+        possible_values = Style::raw_variants(),
+        case_insensitive = true
+    )]
+    style: Style,
+
+    #[structopt(long, default_value = "1")]
+    super_sample: usize,
 
     /// Output file path (overwrites old files), else writes to stdout
     #[structopt(short, long)]
     out: Option<PathBuf>,
 }
 
-#[derive(Debug)]
-enum ColorModel {
-    Hsl,
-    Cielab,
+macro_rules! opt {
+    ($name: ident {
+        $(
+            $variant: ident,
+        )*
+    }) => {
+        #[derive(Debug)]
+        enum $name {
+            $(
+                $variant,
+            )*
+        }
+
+        paste::paste! {
+            impl $name {
+                const fn raw_variants() -> &'static [&'static str] {
+                    &[$(
+                        stringify!([<$variant:snake>]),
+                    )*]
+                }
+            }
+            impl FromStr for $name {
+                type Err = &'static str;
+
+                fn from_str(s: &str) -> Result<Self, Self::Err> {
+                    use $name::*;
+                    match s {
+                        $(
+                            stringify!([<$variant:snake>]) => Ok([<$variant>]),)*
+                        _ => Err(concat!(stringify!($name), " must be one of the following: ", $(stringify!($variant),)*)),
+                    }
+                }
+            }
+        }
+    };
 }
 
-impl FromStr for ColorModel {
-    type Err = &'static str;
+opt! {
+    ColorModel {
+        Hsl,
+        Cielab,
+    }
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "HSL" => Ok(ColorModel::Hsl),
-            "CIELAB" => Ok(ColorModel::Cielab),
-            _ => Err("only valid models are HSL or CIELAB"),
-        }
+opt! {
+    Style {
+        Stipple,
+        Tsp,
+        Mst,
+        Triangulation,
     }
 }
 
@@ -156,7 +209,16 @@ fn main() -> io::Result<()> {
         }
 
         // Linearize color mapping for line drawings
-        pen_image.mapv_inplace(|v| v.powi(2));
+        if matches!(opt.style, Style::Tsp | Style::Mst) {
+            pen_image
+                .slice_mut(s![3, .., ..])
+                .mapv_inplace(|v| v.powi(2));
+            pen_image
+                .slice_mut(s![0..3, .., ..])
+                .mapv_inplace(|v| v.powf(1.5));
+        } else if matches!(opt.style, Style::Triangulation) {
+            pen_image.mapv_inplace(|v| v.powi(3));
+        }
 
         pen_image
     };
@@ -166,8 +228,8 @@ fn main() -> io::Result<()> {
     let pen_diameter = opt.pen_diameter.get::<millimeter>();
     let pen_diameter_in_pixels = pen_diameter * dots_per_mm;
     let stipple_area = (pen_diameter_in_pixels / 2.).powi(2) * std::f64::consts::PI;
-    let width = (pen_image.shape()[1] as f64 / dots_per_mm).round();
-    let height = (pen_image.shape()[2] as f64 / dots_per_mm).round();
+    let width = (pen_image.shape()[1] as f64 / dots_per_mm / opt.super_sample as f64).round();
+    let height = (pen_image.shape()[2] as f64 / dots_per_mm / opt.super_sample as f64).round();
 
     let mut surf = match &opt.out {
         Some(_) => cairo::SvgSurface::new(width, height, opt.out).unwrap(),
@@ -180,17 +242,21 @@ fn main() -> io::Result<()> {
     ctx.rectangle(0., 0., width, height);
     ctx.fill();
 
-    ctx.set_line_width(pen_diameter);
     ctx.set_line_cap(LineCap::Round);
+    ctx.set_line_join(cairo::LineJoin::Round);
     // Makes life easier to work with the same coords as the image
     ctx.scale(
-        width / pen_image.shape()[1] as f64,
-        height / pen_image.shape()[2] as f64,
+        1.0 / dots_per_mm / opt.super_sample as f64,
+        1.0 / dots_per_mm / opt.super_sample as f64,
     );
+    ctx.set_line_width(pen_diameter as f64);
 
-    for k in [0, 1, 2, 3].iter().copied::<usize>() {
+    for k in [0, 2, 3].iter().copied::<usize>() {
         info!("Processing {}", k);
-        let mut voronoi_sites = vec![[pen_image.shape()[1] / 2, pen_image.shape()[2] / 2]];
+        let mut voronoi_sites = vec![[
+            (pen_image.shape()[1] / 2) as i64,
+            (pen_image.shape()[2] / 2) as i64,
+        ]];
 
         let initial_hysteresis = 0.6;
         let hysteresis_delta = 0.01;
@@ -220,8 +286,8 @@ fn main() -> io::Result<()> {
             debug!("Linde-Buzo-Gray Stippling");
 
             let current_hysteresis = initial_hysteresis + iteration as f64 * hysteresis_delta;
-            let remove_threshold = (1. - current_hysteresis / 2.) * stipple_area;
-            let split_threshold = (1. + current_hysteresis / 2.) * stipple_area;
+            let remove_threshold = 1. - current_hysteresis / 2.;
+            let split_threshold = 1. + current_hysteresis / 2.;
 
             let mut new_sites = Vec::with_capacity(voronoi_sites.len());
             let mut changed = false;
@@ -230,12 +296,9 @@ fn main() -> io::Result<()> {
                     .iter()
                     .map(|[x, y]| pen_image[[k, *x, *y]])
                     .sum::<f64>();
-                let scaled_density = density;
-                if scaled_density < remove_threshold {
-                    changed = true;
-                    continue;
-                }
-                let denominator = density;
+
+                let scaled_density = density / opt.super_sample.pow(2) as f64;
+
                 let first_order_y = points
                     .iter()
                     .map(|[x, y]| *y as f64 * pen_image[[k, *x, *y]])
@@ -245,79 +308,105 @@ fn main() -> io::Result<()> {
                     .map(|[x, y]| *x as f64 * pen_image[[k, *x, *y]])
                     .sum::<f64>();
                 let centroid = point(
-                    (first_order_x / denominator).clamp(0., (pen_image.shape()[1] - 1) as f64),
-                    (first_order_y / denominator).clamp(0., (pen_image.shape()[2] - 1) as f64),
+                    (first_order_x / density) as f64,
+                    (first_order_y / density) as f64,
                 );
-                if scaled_density < split_threshold {
-                    new_sites.push(centroid.round().cast::<usize>().to_array());
-                } else {
-                    if points.len() < 3 {
-                        new_sites.push(centroid.round().cast::<usize>().to_array());
-                        warn!("Can't split, there are too few points");
-                        continue;
-                    }
-                    let second_order_x = points
-                        .iter()
-                        .map(|[x, y]| x.pow(2) as f64 * pen_image[[k, *x, *y]])
-                        .sum::<f64>();
-                    let second_order_xy = points
-                        .iter()
-                        .map(|[x, y]| (x * y) as f64 * pen_image[[k, *x, *y]])
-                        .sum::<f64>();
-                    let second_order_y = points
-                        .iter()
-                        .map(|[x, y]| y.pow(2) as f64 * pen_image[[k, *x, *y]])
-                        .sum::<f64>();
+                let second_order_x = points
+                    .iter()
+                    .map(|[x, y]| x.pow(2) as f64 * pen_image[[k, *x, *y]])
+                    .sum::<f64>();
+                let second_order_xy = points
+                    .iter()
+                    .map(|[x, y]| (x * y) as f64 * pen_image[[k, *x, *y]])
+                    .sum::<f64>();
+                let second_order_y = points
+                    .iter()
+                    .map(|[x, y]| y.pow(2) as f64 * pen_image[[k, *x, *y]])
+                    .sum::<f64>();
 
-                    let x = second_order_x / density;
-                    let y = 2.0 * (second_order_xy / density);
-                    let z = second_order_y / density;
-                    let phi = y.atan2(x - z) * 0.5;
-                    let phi_vector = vector(phi.cos(), phi.sin());
-                    let phi_line = Line {
-                        point: centroid,
-                        vector: phi_vector,
-                    };
+                let x = second_order_x / density - centroid.x.powi(2);
+                let y = second_order_xy / density - centroid.x * centroid.y;
+                let z = second_order_y / density - centroid.y.powi(2);
+                let phi = 0.5 * (2.0 * y).atan2(x - z);
+                let phi_vector = vector(phi.cos(), phi.sin());
+                let phi_line = Line {
+                    point: centroid,
+                    vector: phi_vector,
+                };
 
-                    let hull = hull::convex_hull(&points);
-                    let edge_vectors = hull
-                        .iter()
-                        .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-                        .filter_map(|(from, to)| {
-                            let edge = LineSegment {
-                                from: point(from[0] as f64, from[1] as f64),
-                                to: point(to[0] as f64, to[1] as f64),
-                            };
+                let hull = hull::convex_hull(&points);
+                let edge_vectors = hull
+                    .iter()
+                    .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
+                    .filter_map(|(from, to)| {
+                        let edge = LineSegment {
+                            from: point(from[0] as f64, from[1] as f64),
+                            to: point(to[0] as f64, to[1] as f64),
+                        };
 
-                            edge.line_intersection(&phi_line)
-                                .map(|intersection| LineSegment {
-                                    from: centroid,
-                                    to: intersection,
-                                })
-                        })
-                        .collect::<Vec<_>>();
-                    let [left, right] =
-                        if let [left_to_edge, right_to_edge, ..] = 
-                        edge_vectors.as_slice() {
-                            [left_to_edge.sample(0.5), right_to_edge.sample(0.5)]
-                        } else {
-                            let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
-
+                        edge.line_intersection(&phi_line)
+                            .map(|intersection| LineSegment {
+                                from: centroid,
+                                to: intersection,
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let (length, [left, right]) =
+                    if let [centroid_to_edge_a, centroid_to_edge_b, ..] = edge_vectors.as_slice() {
+                        (
+                            centroid_to_edge_a.length() + centroid_to_edge_b.length(),
+                            [
+                                centroid_to_edge_a.sample(0.5),
+                                centroid_to_edge_b.sample(0.5),
+                            ],
+                        )
+                    } else {
+                        let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
+                        (
+                            radius * 2.0,
                             [
                                 (centroid + phi_vector * radius),
                                 (centroid - phi_vector * radius),
-                            ]
-                        };
+                            ],
+                        )
+                    };
+                let line_area = stipple_area; // (length * pen_diameter_in_pixels).max(stipple_area);
 
-                    let zero = point(0., 0.);
-                    let upper_bound = point(
-                        (pen_image.shape()[1] - 1) as f64,
-                        (pen_image.shape()[2] - 1) as f64,
+                let zero = point(0., 0.);
+                let upper_bound = point(
+                    (pen_image.shape()[1] - 1) as f64,
+                    (pen_image.shape()[2] - 1) as f64,
+                );
+
+                if scaled_density < remove_threshold * line_area {
+                    changed = true;
+                    continue;
+                } else if scaled_density < split_threshold * line_area {
+                    new_sites.push(
+                        centroid
+                            .clamp(zero, upper_bound)
+                            .round()
+                            .cast::<i64>()
+                            .to_array(),
                     );
+                } else {
+                    if points.len() < 3 {
+                        new_sites.push(
+                            centroid
+                                .clamp(zero, upper_bound)
+                                .round()
+                                .cast::<i64>()
+                                .to_array(),
+                        );
+                        warn!("Can't split, there are too few points");
+                        continue;
+                    }
+
                     if let Some((left, right)) = left
+                        .round()
                         .clamp(zero, upper_bound)
-                        .try_cast::<usize>()
-                        .zip(right.clamp(zero, upper_bound).try_cast::<usize>())
+                        .try_cast::<i64>()
+                        .zip(right.round().clamp(zero, upper_bound).try_cast::<i64>())
                         .map(|(left, right)| (left.to_array(), right.to_array()))
                     {
                         changed = true;
@@ -325,7 +414,7 @@ fn main() -> io::Result<()> {
                         new_sites.push(right);
                     } else {
                         warn!("could not split: {:?} {:?}", left, right);
-                        new_sites.push(centroid.cast::<usize>().to_array());
+                        new_sites.push(centroid.clamp(zero, upper_bound).cast::<i64>().to_array());
                     }
                 }
             }
@@ -354,16 +443,6 @@ fn main() -> io::Result<()> {
             continue;
         }
 
-        let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
-        for vertex in &voronoi_sites {
-            delaunay.insert([vertex[0] as i64, vertex[1] as i64]);
-        }
-
-        let tree = crate::mst::compute_mst(&voronoi_sites, &delaunay);
-        let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_sites, &tree);
-
-        debug!("Draw to svg");
-
         if k == 0 || k == 5 {
             ctx.set_source_rgb(1., 0., 0.);
         } else if k == 1 || k == 6 {
@@ -374,44 +453,76 @@ fn main() -> io::Result<()> {
             ctx.set_source_rgb(0., 0., 0.);
         }
 
-        // ctx.move_to(tree[0][0][0] as f64, tree[0][0][1] as f64);
-        // for edge in &tree {
-        //     ctx.move_to(edge[0][0] as f64, edge[0][1] as f64);
-        //     ctx.line_to(edge[1][0] as f64, edge[1][1] as f64);
-        //     ctx.stroke();
-        // }
+        match opt.style {
+            Style::Stipple => {
+                debug!("Draw to svg");
+                for point in voronoi_sites {
+                    ctx.move_to(point[0] as f64, point[1] as f64);
+                    ctx.arc(
+                        point[0] as f64,
+                        point[1] as f64,
+                        pen_diameter_in_pixels / 2.0,
+                        0.,
+                        std::f64::consts::TAU,
+                    );
+                    ctx.fill();
+                }
+            }
+            Style::Triangulation | Style::Mst | Style::Tsp => {
+                let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
+                for vertex in &voronoi_sites {
+                    delaunay.insert([vertex[0] as i64, vertex[1] as i64]);
+                }
 
-        // for point in voronoi_sites {
-        //     ctx.move_to(point[0] as f64, point[1] as f64);
-        //     ctx.arc(point[0] as f64, point[1] as f64, pen_diameter / 2., 0., 2. * std::f64::consts::PI);
-        //     ctx.stroke();
-        // }
-
-        if let Some(first) = tsp.first() {
-            ctx.move_to(first[0] as f64, first[1] as f64);
+                if let Style::Triangulation = opt.style {
+                    debug!("Draw to svg");
+                    for edge in delaunay.edges() {
+                        let from: &[i64; 2] = &edge.from();
+                        let to: &[i64; 2] = &edge.to();
+                        ctx.move_to(from[0] as f64, from[1] as f64);
+                        ctx.line_to(to[0] as f64, to[1] as f64);
+                        ctx.stroke();
+                    }
+                } else {
+                    let tree = crate::mst::compute_mst(&voronoi_sites, &delaunay);
+                    if let Style::Mst = opt.style {
+                        debug!("Draw to svg");
+                        ctx.move_to(tree[0][0][0] as f64, tree[0][0][1] as f64);
+                        for edge in &tree {
+                            ctx.move_to(edge[0][0] as f64, edge[0][1] as f64);
+                            ctx.line_to(edge[1][0] as f64, edge[1][1] as f64);
+                            ctx.stroke();
+                        }
+                    } else {
+                        let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_sites, &tree);
+                        debug!("Draw to svg");
+                        if let Some(first) = tsp.first() {
+                            ctx.move_to(first[0] as f64, first[1] as f64);
+                        }
+                        for next in tsp.iter().skip(1) {
+                            ctx.line_to(next[0] as f64, next[1] as f64);
+                        }
+                        ctx.stroke();
+                    }
+                }
+            }
         }
-        for next in tsp.iter().skip(1) {
-            ctx.line_to(next[0] as f64, next[1] as f64);
-        }
-        ctx.stroke();
     }
 
     Ok(())
 }
 
 #[inline]
-fn abs_distance_squared<T: PrimInt>(a: [T; 2], b: [T; 2]) -> T {
-    let x_diff = if a[0] > b[0] {
-        a[0] - b[0]
-    } else {
-        b[0] - a[0]
-    };
-    let y_diff = if a[1] > b[1] {
-        a[1] - b[1]
-    } else {
-        b[1] - a[1]
-    };
-    x_diff.pow(2).saturating_add(y_diff.pow(2))
+fn abs_distance_squared<T: PrimInt + Debug>(a: [T; 2], b: [T; 2]) -> T {
+    let x_diff = a[0] - b[0];
+    let y_diff = a[1] - b[1];
+    debug_assert!(
+        x_diff.pow(2).checked_add(&y_diff.pow(2)).is_some(),
+        "x_diff = {:?}, y_diff = {:?}",
+        x_diff,
+        y_diff
+    );
+    x_diff.pow(2) + y_diff.pow(2)
 }
 
 #[cfg(test)]
