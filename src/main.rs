@@ -47,7 +47,7 @@ struct Opt {
     )]
     color_model: ColorModel,
 
-    // SVG drawing style
+    /// SVG drawing style
     #[structopt(
         long,
         default_value = "mst",
@@ -56,7 +56,7 @@ struct Opt {
     )]
     style: Style,
 
-    // Super-sampling factor
+    /// Super-sampling factor for finer detail control
     #[structopt(long, default_value = "1")]
     super_sample: usize,
 
