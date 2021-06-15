@@ -10,6 +10,8 @@ Using *4.2.07 Peppers* from the [SIPI image database](http://sipi.usc.edu/databa
 cargo run --release  -- peppers.tiff -o peppers.svg --style tsp
 ```
 
+![Peppers comparison](peppers_demo.png)
+
 ## Pipeline
 
 1. Image preprocessing
