@@ -2,6 +2,14 @@
 
 Convert raster graphics into stylistic art renderings. The output of this program is intended for direct use with [svg2gcode](https://github.com/sameer/svg2gcode) to draw with a pen plotter.
 
+## Demo
+
+Using *4.2.07 Peppers* from the [SIPI image database](http://sipi.usc.edu/database/database.php?volume=misc&image=13#top):
+
+```
+cargo run --release  -- peppers.tiff -o peppers.svg --style tsp
+```
+
 ## Pipeline
 
 1. Image preprocessing

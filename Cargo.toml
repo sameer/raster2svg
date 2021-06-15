@@ -25,7 +25,3 @@ paste = "1"
 
 [dev-dependencies]
 pretty_assertions = "0.7"
-
-[profile.release]
-debug = true
-
