@@ -18,7 +18,7 @@ cargo run --release  -- peppers.tiff -o peppers.svg --style tsp
     * Square pixel values
 1. Do Linde-Buzo-Gray stippling
     * Find Voronoi tesselation with Jump flooding algorithm (JFA)
-    * Split stippling points along the longest cell extent when they cover too much capacity
+    * Split stippling points along the cell's second-order moments when they cover too much capacity
     * Remove stippling points when they do not cover enough capacity
     * Calculate cell centroids and move points to them
     * Repeat until no splits/removes occur
