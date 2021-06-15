@@ -288,6 +288,10 @@ fn main() -> io::Result<()> {
                     .iter()
                     .map(|[x, y]| pen_image[[k, *x, *y]])
                     .sum::<f64>();
+                if density == 0.0 {
+                    changed = true;
+                    continue;
+                }
 
                 let scaled_density = density / opt.super_sample.pow(2) as f64;
 
@@ -343,6 +347,9 @@ fn main() -> io::Result<()> {
                             })
                     })
                     .collect::<Vec<_>>();
+
+                debug_assert_eq!(edge_vectors.len(), 2, "{:?} {:?} {}", hull, phi_line, density);
+
                 let (length, [left, right]) =
                     if let [centroid_to_edge_a, centroid_to_edge_b, ..] = edge_vectors.as_slice() {
                         (
