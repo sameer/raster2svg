@@ -2,7 +2,7 @@ use cairo::{Context, LineCap, Matrix};
 use color::{ciexyz_to_cielab, srgb_to_ciexyz, srgb_to_hsl};
 use image::io::Reader as ImageReader;
 use log::*;
-use lyon_geom::{point, vector, Line, LineSegment};
+use lyon_geom::{point, vector};
 use ndarray::prelude::*;
 use num_traits::PrimInt;
 use spade::delaunay::IntDelaunayTriangulation;
@@ -17,6 +17,8 @@ use std::{
 use structopt::StructOpt;
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
+
+use crate::voronoi::{calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi};
 
 mod color;
 mod hull;
@@ -112,9 +114,11 @@ opt! {
 opt! {
     Style {
         Stipple,
+        EdgeStipple,
         Tsp,
         Mst,
         Triangulation,
+        Voronoi,
     }
 }
 
@@ -211,9 +215,9 @@ fn main() -> io::Result<()> {
         }
 
         // Linearize color mapping for line drawings
-        if matches!(opt.style, Style::Tsp | Style::Mst) {
+        if matches!(opt.style, Style::Tsp | Style::Mst | Style::EdgeStipple) {
             pen_image.mapv_inplace(|v| v.powi(2));
-        } else if matches!(opt.style, Style::Triangulation) {
+        } else if matches!(opt.style, Style::Triangulation | Style::Voronoi) {
             pen_image.mapv_inplace(|v| v.powi(3));
         }
 
@@ -243,7 +247,7 @@ fn main() -> io::Result<()> {
     ctx.set_line_join(cairo::LineJoin::Round);
     ctx.set_line_width(pen_diameter);
 
-    for k in [0, 1, 2, 3].iter().copied::<usize>() {
+    for k in [3].iter().copied::<usize>() {
         info!("Processing {}", k);
         let mut voronoi_sites = vec![[
             (pen_image.shape()[1] / 2) as i64,
@@ -253,27 +257,14 @@ fn main() -> io::Result<()> {
         let initial_hysteresis = 0.6;
         let hysteresis_delta = 0.01;
         for iteration in 0..50 {
+
             if voronoi_sites.is_empty() {
                 break;
             }
             debug!("Jump flooding voronoi");
-            let colored_pixels = voronoi::jump_flooding_voronoi(
-                &voronoi_sites,
-                pen_image.shape()[1],
-                pen_image.shape()[2],
-            );
-            let expected_assignment_capacity =
-                pen_image.shape()[1] * pen_image.shape()[2] / voronoi_sites.len();
-            let mut sites_to_points =
-                vec![
-                    Vec::<[usize; 2]>::with_capacity(expected_assignment_capacity);
-                    voronoi_sites.len()
-                ];
-            for i in 0..pen_image.shape()[1] as usize {
-                for j in 0..pen_image.shape()[2] as usize {
-                    sites_to_points[colored_pixels[j][i]].push([i, j]);
-                }
-            }
+            let colored_pixels =
+                jump_flooding_voronoi(&voronoi_sites, pen_image.shape()[1], pen_image.shape()[2]);
+            let sites_to_points = colors_to_assignments(&voronoi_sites, &colored_pixels);
 
             debug!("Linde-Buzo-Gray Stippling");
 
@@ -284,92 +275,19 @@ fn main() -> io::Result<()> {
             let mut new_sites = Vec::with_capacity(voronoi_sites.len());
             let mut changed = false;
             for (_, points) in voronoi_sites.iter().zip(sites_to_points.iter()) {
-                let density = points
-                    .iter()
-                    .map(|[x, y]| pen_image[[k, *x, *y]])
-                    .sum::<f64>();
-                if density == 0.0 {
+                let cell_properties =
+                    calculate_cell_properties(pen_image.slice(s![k, .., ..]), points);
+                let moments = cell_properties.moments;
+
+                if moments.density == 0.0 {
                     changed = true;
                     continue;
                 }
+                let centroid = cell_properties.centroid.unwrap();
 
-                let scaled_density = density / opt.super_sample.pow(2) as f64;
+                let scaled_density = moments.density / opt.super_sample.pow(2) as f64;
 
-                let first_order_y = points
-                    .iter()
-                    .map(|[x, y]| *y as f64 * pen_image[[k, *x, *y]])
-                    .sum::<f64>();
-                let first_order_x = points
-                    .iter()
-                    .map(|[x, y]| *x as f64 * pen_image[[k, *x, *y]])
-                    .sum::<f64>();
-                let centroid = point(
-                    (first_order_x / density) as f64,
-                    (first_order_y / density) as f64,
-                );
-                let second_order_x = points
-                    .iter()
-                    .map(|[x, y]| x.pow(2) as f64 * pen_image[[k, *x, *y]])
-                    .sum::<f64>();
-                let second_order_xy = points
-                    .iter()
-                    .map(|[x, y]| (x * y) as f64 * pen_image[[k, *x, *y]])
-                    .sum::<f64>();
-                let second_order_y = points
-                    .iter()
-                    .map(|[x, y]| y.pow(2) as f64 * pen_image[[k, *x, *y]])
-                    .sum::<f64>();
-
-                let x = second_order_x / density - centroid.x.powi(2);
-                let y = second_order_xy / density - centroid.x * centroid.y;
-                let z = second_order_y / density - centroid.y.powi(2);
-                let phi = 0.5 * (2.0 * y).atan2(x - z);
-                let phi_vector = vector(phi.cos(), phi.sin());
-                let phi_line = Line {
-                    point: centroid,
-                    vector: phi_vector,
-                };
-
-                let hull = hull::convex_hull(&points);
-                let edge_vectors = hull
-                    .iter()
-                    .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-                    .filter_map(|(from, to)| {
-                        let edge = LineSegment {
-                            from: point(from[0] as f64, from[1] as f64),
-                            to: point(to[0] as f64, to[1] as f64),
-                        };
-
-                        edge.line_intersection(&phi_line)
-                            .map(|intersection| LineSegment {
-                                from: centroid,
-                                to: intersection,
-                            })
-                    })
-                    .collect::<Vec<_>>();
-
-                debug_assert_eq!(edge_vectors.len(), 2, "{:?} {:?} {}", hull, phi_line, density);
-
-                let (length, [left, right]) =
-                    if let [centroid_to_edge_a, centroid_to_edge_b, ..] = edge_vectors.as_slice() {
-                        (
-                            centroid_to_edge_a.length() + centroid_to_edge_b.length(),
-                            [
-                                centroid_to_edge_a.sample(0.5),
-                                centroid_to_edge_b.sample(0.5),
-                            ],
-                        )
-                    } else {
-                        let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
-                        (
-                            radius * 2.0,
-                            [
-                                (centroid + phi_vector * radius),
-                                (centroid - phi_vector * radius),
-                            ],
-                        )
-                    };
-                let line_area = stipple_area; // (length * pen_diameter_in_pixels).max(stipple_area);
+                let line_area = stipple_area;
 
                 let zero = point(0., 0.);
                 let upper_bound = point(
@@ -400,6 +318,12 @@ fn main() -> io::Result<()> {
                         warn!("Can't split, there are too few points");
                         continue;
                     }
+
+                    let line_segment = cell_properties
+                        .phi_oriented_segment_through_centroid
+                        .unwrap();
+                    let left = line_segment.sample(0.25);
+                    let right = line_segment.sample(0.75);
 
                     if let Some((left, right)) = left
                         .round()
@@ -455,21 +379,76 @@ fn main() -> io::Result<()> {
         match opt.style {
             Style::Stipple => {
                 debug!("Draw to svg");
-                for point in voronoi_sites {
+                for site in voronoi_sites {
                     ctx.scale(
                         1.0 / dots_per_mm / opt.super_sample as f64,
                         1.0 / dots_per_mm / opt.super_sample as f64,
                     );
-                    ctx.move_to(point[0] as f64, point[1] as f64);
+                    ctx.move_to(site[0] as f64, site[1] as f64);
                     ctx.arc(
-                        point[0] as f64,
-                        point[1] as f64,
+                        site[0] as f64,
+                        site[1] as f64,
                         pen_diameter_in_pixels / 2.0,
                         0.,
                         std::f64::consts::TAU,
                     );
                     ctx.set_matrix(Matrix::identity());
                     ctx.fill();
+                }
+            }
+            Style::Voronoi => {
+                debug!("Draw to svg");
+                let sites_to_points = colors_to_assignments(
+                    &voronoi_sites,
+                    &jump_flooding_voronoi(
+                        &voronoi_sites,
+                        pen_image.shape()[1],
+                        pen_image.shape()[2],
+                    ),
+                );
+                for points in sites_to_points {
+                    let properties =
+                        calculate_cell_properties(pen_image.slice(s![k, .., ..]), &points);
+                    if let Some(hull) = properties.hull {
+                        ctx.scale(
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                        );
+                        if let Some(first) = hull.first() {
+                            ctx.move_to(first[0] as f64, first[1] as f64);
+                        }
+                        for point in hull.iter().skip(1) {
+                            ctx.line_to(point[0] as f64, point[1] as f64);
+                        }
+                        ctx.set_matrix(Matrix::identity());
+                        ctx.stroke();
+                    }
+                }
+            }
+            Style::EdgeStipple => {
+                debug!("Draw to svg");
+                let sites_to_points = colors_to_assignments(
+                    &voronoi_sites,
+                    &jump_flooding_voronoi(
+                        &voronoi_sites,
+                        pen_image.shape()[1],
+                        pen_image.shape()[2],
+                    ),
+                );
+
+                for points in sites_to_points {
+                    let properties =
+                        calculate_cell_properties(pen_image.slice(s![k, .., ..]), &points);
+                    if let Some(line_segment) = properties.phi_oriented_segment_through_centroid {
+                        ctx.scale(
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                        );
+                        ctx.move_to(line_segment.from().x, line_segment.from().y);
+                        ctx.line_to(line_segment.to().x, line_segment.to().y);
+                        ctx.set_matrix(Matrix::identity());
+                        ctx.stroke();
+                    }
                 }
             }
             Style::Triangulation | Style::Mst | Style::Tsp => {
