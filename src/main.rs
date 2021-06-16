@@ -215,7 +215,7 @@ fn main() -> io::Result<()> {
         }
 
         // Linearize color mapping for line drawings
-        if matches!(opt.style, Style::Tsp | Style::Mst | Style::EdgeStipple) {
+        if matches!(opt.style, Style::Tsp | Style::Mst) {
             pen_image.mapv_inplace(|v| v.powi(2));
         } else if matches!(opt.style, Style::Triangulation | Style::Voronoi) {
             pen_image.mapv_inplace(|v| v.powi(3));
@@ -247,7 +247,7 @@ fn main() -> io::Result<()> {
     ctx.set_line_join(cairo::LineJoin::Round);
     ctx.set_line_width(pen_diameter);
 
-    for k in [3].iter().copied::<usize>() {
+    for k in 0..=3 {
         info!("Processing {}", k);
         let mut voronoi_sites = vec![[
             (pen_image.shape()[1] / 2) as i64,
@@ -257,7 +257,6 @@ fn main() -> io::Result<()> {
         let initial_hysteresis = 0.6;
         let hysteresis_delta = 0.01;
         for iteration in 0..50 {
-
             if voronoi_sites.is_empty() {
                 break;
             }
@@ -287,7 +286,20 @@ fn main() -> io::Result<()> {
 
                 let scaled_density = moments.density / opt.super_sample.pow(2) as f64;
 
-                let line_area = stipple_area;
+                let line_area = if matches!(opt.style, Style::EdgeStipple) {
+                    if let Some(line_segment) = cell_properties
+                        .phi_oriented_segment_through_centroid
+                        .as_ref()
+                    {
+                        ((line_segment.length() - pen_diameter_in_pixels) * pen_diameter_in_pixels
+                            + stipple_area)
+                            .max(stipple_area)
+                    } else {
+                        stipple_area
+                    }
+                } else {
+                    stipple_area
+                };
 
                 let zero = point(0., 0.);
                 let upper_bound = point(
@@ -444,8 +456,12 @@ fn main() -> io::Result<()> {
                             1.0 / dots_per_mm / opt.super_sample as f64,
                             1.0 / dots_per_mm / opt.super_sample as f64,
                         );
-                        ctx.move_to(line_segment.from().x, line_segment.from().y);
-                        ctx.line_to(line_segment.to().x, line_segment.to().y);
+                        let shift_vector = line_segment.to_vector()
+                            * ((pen_diameter_in_pixels / 2.0) / line_segment.length());
+                        let from = line_segment.from() + shift_vector;
+                        let to = line_segment.to() - shift_vector;
+                        ctx.move_to(from.x, from.y);
+                        ctx.line_to(to.x, to.y);
                         ctx.set_matrix(Matrix::identity());
                         ctx.stroke();
                     }

@@ -147,9 +147,9 @@ pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
         );
         cell_properties.centroid = Some(centroid);
 
-        let x = moments.xx / moments.density - centroid.x.powi(2);
-        let y = moments.xy / moments.density - centroid.x * centroid.y;
-        let z = moments.yy / moments.density - centroid.y.powi(2);
+        let x = moments.xx / moments.density - (moments.x / moments.density).powi(2);
+        let y = moments.xy / moments.density - (moments.x * moments.y / moments.density.powi(2));
+        let z = moments.yy / moments.density - (moments.y / moments.density).powi(2);
         let phi = 0.5 * (2.0 * y).atan2(x - z);
         let phi_vector = vector(phi.cos(), phi.sin());
         cell_properties.phi_vector = Some(phi_vector);
@@ -223,20 +223,21 @@ mod tests {
         const HEIGHT: usize = 256;
         let sites = [
             [0, 0],
-            [0, HEIGHT - 1],
-            [WIDTH - 1, 0],
-            [WIDTH - 1, HEIGHT - 1],
-            [WIDTH / 2, HEIGHT / 2],
+            [0, HEIGHT as i64 - 1],
+            [WIDTH as i64 - 1, 0],
+            [WIDTH as i64 - 1, HEIGHT as i64 - 1],
+            [WIDTH as i64 / 2, HEIGHT as i64 / 2],
         ];
         let assignments = jump_flooding_voronoi(&sites, WIDTH, HEIGHT);
         for j in 0..HEIGHT {
             for i in 0..WIDTH {
                 let min_distance = sites
                     .iter()
-                    .map(|site| abs_distance_squared(*site, [i, j]))
+                    .map(|site| abs_distance_squared(*site, [i as i64, j as i64]))
                     .min()
                     .unwrap();
-                let actual_distance = abs_distance_squared(sites[assignments[j][i]], [i, j]);
+                let actual_distance =
+                    abs_distance_squared(sites[assignments[j][i]], [i as i64, j as i64]);
 
                 // Don't check the assigned site because of distance ties
                 assert_eq!(min_distance, actual_distance);
