@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
-use lyon_geom::{point, vector, Line, LineSegment, Point, Vector};
+use log::warn;
+use lyon_geom::{point, vector, Angle, Line, LineSegment, Point, Vector};
 use ndarray::ArrayView2;
 use num_traits::{FromPrimitive, PrimInt, Signed};
 
@@ -150,8 +151,9 @@ pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
         let x = moments.xx / moments.density - (moments.x / moments.density).powi(2);
         let y = moments.xy / moments.density - (moments.x * moments.y / moments.density.powi(2));
         let z = moments.yy / moments.density - (moments.y / moments.density).powi(2);
-        let phi = 0.5 * (2.0 * y).atan2(x - z);
-        let phi_vector = vector(phi.cos(), phi.sin());
+        let phi = Angle::radians(0.5 * (2.0 * y).atan2(x - z));
+        let (sin, cos) = phi.sin_cos();
+        let phi_vector = vector(cos, sin);
         cell_properties.phi_vector = Some(phi_vector);
 
         if points.len() >= 3 {
@@ -177,23 +179,20 @@ pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
                 })
                 .collect::<Vec<_>>();
 
-            assert_eq!(
-                edge_vectors.len(),
-                2,
-                "It should be impossible for a line to intersect a polygon at more than two edges: {:?} {:?} {:?}",
-                hull,
-                centroid,
-                phi_vector,
-            );
-
-            cell_properties.hull = Some(hull);
-
-            if let [left, right] = edge_vectors.as_slice() {
+            if edge_vectors.len() != 2 {
+                warn!("It should be impossible for this line to intersect the hull at more than two edges: {:?} {:?} {:?}", &hull, centroid, phi_vector);
+                let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
+                cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
+                    from: centroid + phi_vector * radius,
+                    to: centroid - phi_vector * radius,
+                });
+            } else if let [left, right] = edge_vectors.as_slice() {
                 cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
                     from: left.to,
                     to: right.to,
                 });
             }
+            cell_properties.hull = Some(hull);
         }
 
         if cell_properties
