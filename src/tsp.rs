@@ -6,21 +6,21 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::{fmt::Debug, hash::Hash, iter::Sum};
 
 #[derive(PartialEq, Eq, Debug)]
-struct Edge<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug>([[T; 2]; 2]);
+struct Edge<T: Debug>([[T; 2]; 2]);
 
-impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> Edge<T> {
+impl<T: PrimInt + Signed + Eq + PartialEq + PartialOrd + Ord + Debug> Edge<T> {
     fn length(&self) -> T {
         abs_distance_squared(self.0[0], self.0[1])
     }
 }
 
-impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> PartialOrd for Edge<T> {
+impl<T: PrimInt + Signed + Eq + PartialEq + PartialOrd + Ord + Debug> PartialOrd for Edge<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.length().partial_cmp(&other.length())
     }
 }
 
-impl<T: PrimInt + Eq + PartialEq + PartialOrd + Ord + Debug> Ord for Edge<T> {
+impl<T: PrimInt + Signed + Eq + PartialEq + PartialOrd + Ord + Debug> Ord for Edge<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.length().cmp(&other.length())
     }

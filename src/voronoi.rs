@@ -7,13 +7,77 @@ use num_traits::{FromPrimitive, PrimInt, Signed};
 
 use crate::abs_distance_squared;
 
+pub trait Site<T: PrimInt + FromPrimitive + Debug> {
+    fn dist(&self, point: [T; 2]) -> f64;
+    fn seeds(&self, width: usize, height: usize) -> Vec<[T; 2]>;
+}
+
+impl<T> Site<T> for [T; 2]
+where
+    T: PrimInt + Signed + FromPrimitive + Debug,
+{
+    fn dist(&self, point: [T; 2]) -> f64 {
+        abs_distance_squared(*self, point).to_f64().unwrap()
+    }
+    fn seeds(&self, width: usize, height: usize) -> Vec<[T; 2]> {
+        vec![*self]
+    }
+}
+
+impl<T> Site<T> for LineSegment<f64>
+where
+    T: PrimInt + FromPrimitive + Debug,
+{
+    fn dist(&self, p: [T; 2]) -> f64 {
+        let p = point(p[0].to_f64().unwrap(), p[1].to_f64().unwrap());
+        let square_length = self.to_vector().square_length();
+        if square_length.abs() <= f64::EPSILON {
+            (p - self.from).square_length();
+        }
+
+        let t = ((p - self.from).dot(self.to - self.from) / square_length).clamp(0., 1.);
+
+        (p - self.sample(t)).square_length()
+    }
+
+    fn seeds(&self, width: usize, height: usize) -> Vec<[T; 2]> {
+        let mut seeds = vec![];
+
+        let width = (width - 1) as f64;
+        let height = (height - 1) as f64;
+
+        {
+            let start_x = self.from.x.min(self.to.x).floor().clamp(0., width);
+            let end_x = self.from.x.max(self.to.x).ceil().clamp(0., width);
+            let mut x = start_x;
+            while x < end_x {
+                let y = self.solve_y_for_x(x).clamp(0., height);
+                seeds.push([T::from_f64(x).unwrap(), T::from_f64(y.round()).unwrap()]);
+                x += 1.;
+            }
+        }
+        {
+            let start_y = self.from.y.min(self.to.y).floor().clamp(0., height);
+            let end_y = self.from.y.max(self.to.y).ceil().clamp(0., height);
+            let mut y = start_y;
+            while y < end_y {
+                let x = self.solve_x_for_y(y).clamp(0., width);
+                seeds.push([T::from_f64(x).unwrap(), T::from_f64(y.round()).unwrap()]);
+                y += 1.;
+            }
+        }
+
+        seeds
+    }
+}
+
 /// Given a set of sites in a bounding box from (0, 0) to (width, height),
 /// return the assignment of coordinates in that box to their nearest neighbor
 /// using the Jump Flooding Algorithm.
 ///
 /// https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf
-pub fn jump_flooding_voronoi<T: PrimInt + Signed + FromPrimitive + Debug>(
-    sites: &[[T; 2]],
+pub fn jump_flooding_voronoi<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
+    sites: &[S],
     width: usize,
     height: usize,
 ) -> Vec<Vec<usize>> {
@@ -23,7 +87,9 @@ pub fn jump_flooding_voronoi<T: PrimInt + Signed + FromPrimitive + Debug>(
     // use usize::MAX to represent colorless cells
     let mut grid = vec![vec![usize::MAX; width]; height];
     sites.iter().enumerate().for_each(|(color, site)| {
-        grid[site[1].to_usize().unwrap()][site[0].to_usize().unwrap()] = color;
+        for seed in site.seeds(width, height) {
+            grid[seed[1].to_usize().unwrap()][seed[0].to_usize().unwrap()] = color;
+        }
     });
 
     let mut round_step = (width.max(height))
@@ -62,8 +128,7 @@ pub fn jump_flooding_voronoi<T: PrimInt + Signed + FromPrimitive + Debug>(
                             let current = grid[j][i];
                             let here = [T::from_usize(i).unwrap(), T::from_usize(j).unwrap()];
                             if current == usize::MAX
-                                || abs_distance_squared(here, sites[new])
-                                    < abs_distance_squared(here, sites[current])
+                                || sites[new].dist(here) < sites[current].dist(here)
                             {
                                 grid[j][i] = new;
                             }
@@ -79,8 +144,8 @@ pub fn jump_flooding_voronoi<T: PrimInt + Signed + FromPrimitive + Debug>(
     grid
 }
 
-pub fn colors_to_assignments<T: PrimInt + FromPrimitive>(
-    sites: &[[T; 2]],
+pub fn colors_to_assignments<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
+    sites: &[S],
     grid: &[Vec<usize>],
 ) -> Vec<Vec<[T; 2]>> {
     let expected_assignment_capacity =
