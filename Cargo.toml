@@ -12,7 +12,7 @@ cairo-rs = { version = "^0", features = ["svg", "v1_16"] }
 image = { version = "0.23", features = ["jpeg", "png", "tiff", "bmp"] }
 structopt = "0.3"
 log = "0"
-env_logger = "0"
+env_logger = { version = "0", default-features = false, features = ["atty", "termcolor", "humantime"] }
 uom = "0.31"
 ndarray = { version = "0.15" }
 rand = { version = "0.8", features = ["alloc"] }
