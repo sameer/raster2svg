@@ -89,3 +89,11 @@ There are also some noteworthy papers that while interesting did not directly in
 * Depth-aware coherent line drawings https://kops.uni-konstanz.de/bitstream/123456789/32742/1/Spicker_0-307233.pdf
 * Hamiltonian cycle art: Surface covering wire sculptures and duotone surfaces http://people.tamu.edu/~ergun/research/topology/papers/candg12.pdf
 * Generating Color Scribble Images using Multi‐layered Monochromatic Strokes Dithering http://cgv.cs.nthu.edu.tw/~seanyhl/project/ColorScribbleArt/MLMSD_eg19.pdf
+* LinesLab: A Flexible Low\u2010Cost Approach for the Generation of Physical Monochrome Art https://vis.uib.no/wp-content/papercite-data/pdfs/Stoppel-2019-LFL.pdf
+* State of the "Art": A Taxonomy of Artistic Stylization Techniques for Images and Video http://epubs.surrey.ac.uk/721461/1/Collomosse-TVCG-2012.pdf
+* XDoG: Advanced Image Stylization with eXtended Difference-of-Gaussians https://sci-hub.st/10.1145/2024676.2024700
+* Flow-Based Image Abstraction http://www.cs.umsl.edu/~kang/Papers/kang_tvcg09.pdf
+* Colored Pencil Filter with Custom Colors https://sci-hub.st/https://doi.org/10.1109/PCCGA.2004.1348364
+* PencilArt: A Chromatic Penciling Style Generation Framework https://sci-hub.st/https://doi.org/10.1111/cgf.13334
+* A Texture-Based Approach for Hatching Color Photographs https://sci-hub.st/https://doi.org/10.1007/978-3-642-17289-2_9
+* Perception-Motivated High-Quality Stylization https://curve.carleton.ca/system/files/etd/e1a12c4d-890e-4626-8f57-768f661f3121/etd_pdf/10e988374e6e4a31b58b17568881b47f/li-perceptionmotivatedhighqualitystylization.pdf
