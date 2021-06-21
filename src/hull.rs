@@ -6,7 +6,6 @@ use num_traits::PrimInt;
 ///
 /// https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain
 pub fn convex_hull<T: PrimInt + Debug>(points: &[[T; 2]]) -> Vec<[T; 2]> {
-    let mut upper = Vec::with_capacity(points.len() / 2);
     let mut lower = Vec::with_capacity(points.len() / 2);
     for point in points {
         while lower.len() >= 2
@@ -16,7 +15,7 @@ pub fn convex_hull<T: PrimInt + Debug>(points: &[[T; 2]]) -> Vec<[T; 2]> {
         }
         lower.push(*point);
     }
-
+    let mut upper = Vec::with_capacity(points.len() / 2);
     for point in points.iter().rev() {
         while upper.len() >= 2
             && !is_counter_clockwise(upper[upper.len() - 2], upper[upper.len() - 1], *point)
@@ -37,7 +36,7 @@ fn is_counter_clockwise<T: PrimInt + Debug>(a: [T; 2], b: [T; 2], c: [T; 2]) -> 
     let negative = a[0] * c[1] + c[0] * b[1] + a[1] * b[0] + c[1] * c[0];
     positive
         .checked_sub(&negative)
-        .map(|x| x >= T::zero())
+        .map(|x| x > T::zero())
         .unwrap_or(false)
 }
 
