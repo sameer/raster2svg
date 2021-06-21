@@ -14,7 +14,7 @@ structopt = "0.3"
 log = "0"
 env_logger = { version = "0", default-features = false, features = ["atty", "termcolor", "humantime"] }
 uom = "0.31"
-ndarray = { version = "0.15" }
+ndarray = { version = "0.15", features = ["rayon"] }
 rand = { version = "0.8", features = ["alloc"] }
 spade = "1.8"
 rustc-hash = "1.1"
