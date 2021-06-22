@@ -162,7 +162,7 @@ pub fn colors_to_assignments<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
     sites_to_points
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Moments {
     pub density: f64,
     pub x: f64,
@@ -190,7 +190,7 @@ fn calculate_moments<T: PrimInt>(image: ArrayView2<f64>, points: &[[T; 2]]) -> M
     moments
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CellProperties<T: PrimInt + Debug + Default> {
     pub moments: Moments,
     pub centroid: Option<Point<f64>>,
@@ -207,7 +207,7 @@ pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
 
     let mut cell_properties = CellProperties::default();
 
-    if moments.density != 0.0 {
+    if moments.density > f64::EPSILON {
         let centroid = point(
             (moments.x / moments.density) as f64,
             (moments.y / moments.density) as f64,
@@ -222,52 +222,70 @@ pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
         let phi_vector = vector(cos, sin);
         cell_properties.phi_vector = Some(phi_vector);
 
+        const HULL_EPSILON: f64 = 1E-4;
+
         if points.len() >= 3 {
             let hull = crate::hull::convex_hull(points);
-
-            let edge_vectors = hull
-                .iter()
-                .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-                .filter_map(|(from, to)| {
-                    let edge = LineSegment {
-                        from: point(from[0].to_f64().unwrap(), from[1].to_f64().unwrap()),
-                        to: point(to[0].to_f64().unwrap(), to[1].to_f64().unwrap()),
-                    };
-
-                    edge.line_intersection(&Line {
-                        point: centroid,
-                        vector: phi_vector,
-                    })
-                    .map(|intersection| LineSegment {
-                        from: centroid,
-                        to: intersection,
-                    })
-                    .filter(|segment| segment.from != segment.to)
+            // Hull may not be valid if points were collinear, or the centroid may lie directly on a vertex
+            if hull.len() >= 3
+                && !hull.iter().any(|vertex| {
+                    (centroid.x - vertex[0].to_f64().unwrap()).abs() < HULL_EPSILON
+                        && (centroid.y - vertex[1].to_f64().unwrap()).abs() < HULL_EPSILON
                 })
-                .collect::<Vec<_>>();
+                && !hull
+                    .iter()
+                    .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
+                    .any(|(from, to)| {
+                        let edge = LineSegment {
+                            from: point(from[0].to_f64().unwrap(), from[1].to_f64().unwrap()),
+                            to: point(to[0].to_f64().unwrap(), to[1].to_f64().unwrap()),
+                        };
+                        let x = edge.solve_x_for_y(centroid.y);
+                        let y = edge.solve_y_for_x(centroid.x);
+                        (x - centroid.x).abs() < HULL_EPSILON && (y - centroid.y).abs() < HULL_EPSILON
+                    })
+            {
+                let mut edge_vectors = hull
+                    .iter()
+                    .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
+                    .filter_map(|(from, to)| {
+                        let edge = LineSegment {
+                            from: point(from[0].to_f64().unwrap(), from[1].to_f64().unwrap()),
+                            to: point(to[0].to_f64().unwrap(), to[1].to_f64().unwrap()),
+                        };
 
-            if edge_vectors.len() > 2 {
-                unreachable!("The hull algorithm is wrong should this ever happen")
-            } else if edge_vectors.len() < 2 {
-                warn!("It should be impossible for this line to intersect the hull at less than two edges, but points may be collinear: {:?} {:?} {:?}", points, centroid, phi_vector);
-                let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
-                cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
-                    from: centroid + phi_vector * radius,
-                    to: centroid - phi_vector * radius,
+                        edge.line_intersection(&Line {
+                            point: centroid,
+                            vector: phi_vector,
+                        })
+                        .map(|intersection| LineSegment {
+                            from: centroid,
+                            to: intersection,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                // Resolves the issue of hull vertex intersections and floating point inaccuracy
+                edge_vectors.sort_by(|a, b| {
+                    a.to.x
+                        .partial_cmp(&b.to.x)
+                        .unwrap()
+                        .then(a.to.y.partial_cmp(&b.to.y).unwrap())
                 });
-            } else if let [left, right] = edge_vectors.as_slice() {
-                cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
-                    from: left.to,
-                    to: right.to,
-                });
+                edge_vectors.dedup_by(|a, b| (a.to - b.to).length() < HULL_EPSILON);
+
+                if edge_vectors.len() != 2 {
+                    warn!("It should be impossible for this line to intersect the hull at {} edges: {:?} {:?} {:?} {:?} {:?}", edge_vectors.len(), &edge_vectors, &hull, centroid, phi_vector, moments);
+                } else if let [left, right] = edge_vectors.as_slice() {
+                    cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
+                        from: left.to,
+                        to: right.to,
+                    });
+                }
             }
-            cell_properties.hull = Some(hull);
-        }
 
-        if cell_properties
-            .phi_oriented_segment_through_centroid
-            .is_none()
-        {
+            cell_properties.hull = Some(hull);
+        } else {
             let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
             cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
                 from: centroid + phi_vector * radius,
