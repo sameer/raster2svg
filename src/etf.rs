@@ -10,7 +10,7 @@ use ndarray::prelude::*;
 ///
 /// Sobel kernel is [Scharr's frequently kernel](https://en.wikipedia.org/wiki/Sobel_operator#Alternative_operators).
 /// Edge handling is a kernel crop without compensation.
-/// 
+///
 pub fn edge_tangent_flow(image: ArrayView2<f64>) -> Array2<Vector<f64>> {
     let sobel_x = array![[3., 0., -3.], [10., 0., -10.], [3., 0., -3.]];
     let mut t0 = Array::from_iter(
@@ -80,7 +80,7 @@ pub fn edge_tangent_flow(image: ArrayView2<f64>) -> Array2<Vector<f64>> {
     // Re-apply magnitude
     par_azip! {
         (v in &mut t, magnitude in &g_hat) {
-            *v = *v * *magnitude;
+            *v *= *magnitude;
         }
     }
 

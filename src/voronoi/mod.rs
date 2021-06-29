@@ -134,10 +134,8 @@ pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitiv
                 par_azip! {
                     (dest in scratchpad.slice_mut(center_slice_info), sample in grid.slice(kernel_slice_info), here in positions.slice(center_slice_info)) {
                         let here = [T::from_usize(here[0]).unwrap(), T::from_usize(here[1]).unwrap()];
-                        if *sample != usize::MAX {
-                            if *dest == usize::MAX || sites[*sample].dist(here) < sites[*dest].dist(here) {
-                                *dest = *sample;
-                            }
+                        if *sample != usize::MAX && (*dest == usize::MAX || sites[*sample].dist(here) < sites[*dest].dist(here)) {
+                            *dest = *sample;
                         }
                     }
                 };
@@ -204,45 +202,6 @@ pub struct CellProperties<T: PrimInt + Debug + Default> {
     pub phi_oriented_segment_through_centroid: Option<LineSegment<f64>>,
 }
 
-/// Andrew's monotone chain convex hull algorithm
-///
-/// <https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain>
-pub fn convex_hull<T: PrimInt + Debug>(points: &[[T; 2]]) -> Vec<[T; 2]> {
-    let mut lower = Vec::with_capacity(points.len() / 2);
-    for point in points {
-        while lower.len() >= 2
-            && !is_counter_clockwise(lower[lower.len() - 2], lower[lower.len() - 1], *point)
-        {
-            lower.pop();
-        }
-        lower.push(*point);
-    }
-    let mut upper = Vec::with_capacity(points.len() / 2);
-    for point in points.iter().rev() {
-        while upper.len() >= 2
-            && !is_counter_clockwise(upper[upper.len() - 2], upper[upper.len() - 1], *point)
-        {
-            upper.pop();
-        }
-        upper.push(*point);
-    }
-    upper.pop();
-    lower.pop();
-    lower.append(&mut upper);
-    lower
-}
-
-/// Check whether there is a counter-clockwise turn using the cross product of ca and cb interpreted as 3D vectors.
-fn is_counter_clockwise<T: PrimInt + Debug>(a: [T; 2], b: [T; 2], c: [T; 2]) -> bool {
-    let positive = a[0] * b[1] + c[0] * c[1] + a[1] * c[0] + c[1] * b[0];
-    let negative = a[0] * c[1] + c[0] * b[1] + a[1] * b[0] + c[1] * c[0];
-    positive
-        .checked_sub(&negative)
-        .map(|x| x > T::zero())
-        .unwrap_or(false)
-}
-
-
 pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
     image: ArrayView2<f64>,
     points: &[[T; 2]],
@@ -286,7 +245,8 @@ pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
                         };
                         let x = edge.solve_x_for_y(centroid.y);
                         let y = edge.solve_y_for_x(centroid.x);
-                        (x - centroid.x).abs() < HULL_EPSILON && (y - centroid.y).abs() < HULL_EPSILON
+                        (x - centroid.x).abs() < HULL_EPSILON
+                            && (y - centroid.y).abs() < HULL_EPSILON
                     })
             {
                 let mut edge_vectors = hull

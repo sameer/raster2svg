@@ -32,7 +32,9 @@ pub fn convex_hull<T: PrimInt + Debug>(points: &[[T; 2]]) -> Vec<[T; 2]> {
 
 /// Check whether there is a counter-clockwise turn using the cross product of ca and cb interpreted as 3D vectors.
 fn is_counter_clockwise<T: PrimInt + Debug>(a: [T; 2], b: [T; 2], c: [T; 2]) -> bool {
+    #[allow(clippy::suspicious_operation_groupings)]
     let positive = a[0] * b[1] + c[0] * c[1] + a[1] * c[0] + c[1] * b[0];
+    #[allow(clippy::suspicious_operation_groupings)]
     let negative = a[0] * c[1] + c[0] * b[1] + a[1] * b[0] + c[1] * c[0];
     positive
         .checked_sub(&negative)

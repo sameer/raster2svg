@@ -17,7 +17,7 @@ use structopt::StructOpt;
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
-use crate::render::{render_edge_based, render_fdog_based, render_stipple_based};
+use crate::render::{render_fdog_based, render_stipple_based};
 
 /// Adjust image color
 mod color;
@@ -129,7 +129,7 @@ opt! {
 opt! {
     Style {
         Stipple,
-        EdgeStipple,
+        EdgesPlusHatching,
         Tsp,
         Mst,
         Triangulation,
@@ -289,7 +289,7 @@ fn main() -> io::Result<()> {
         }
 
         match opt.style {
-            Style::EdgeStipple => render_edge_based(
+            Style::EdgesPlusHatching => render_fdog_based(
                 pen_image.slice(s![k, .., ..]),
                 opt.super_sample,
                 instrument_diameter_in_pixels,
@@ -319,23 +319,6 @@ fn main() -> io::Result<()> {
                     mat
                 },
             ),
-            _ => {
-                render_fdog_based(
-                    pen_image.slice(s![k, .., ..]),
-                    opt.super_sample,
-                    instrument_diameter_in_pixels,
-                    opt.style,
-                    &ctx,
-                    {
-                        let mut mat = Matrix::identity();
-                        mat.scale(
-                            1.0 / dots_per_mm / opt.super_sample as f64,
-                            1.0 / dots_per_mm / opt.super_sample as f64,
-                        );
-                        mat
-                    },
-                );
-            }
         }
     }
     Ok(())
