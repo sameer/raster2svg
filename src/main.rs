@@ -21,8 +21,8 @@ use crate::render::{render_fdog_based, render_stipple_based};
 
 /// Adjust image color
 mod color;
-/// Compute the Edge Tangent Flow
-mod etf;
+/// Calculations necessary for the Flow-based Difference for Gaussians (FDoG) algorithm
+mod fdog;
 /// Find the [Minimum Spanning Tree (MST)](https://en.wikipedia.org/wiki/Minimum_spanning_tree)
 mod mst;
 /// Routines for creating the final SVG using [Cairo](cairographics.org)

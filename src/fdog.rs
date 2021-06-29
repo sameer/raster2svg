@@ -87,6 +87,8 @@ pub fn edge_tangent_flow(image: ArrayView2<f64>) -> Array2<Vector<f64>> {
     t
 }
 
+pub fn fdog(image: ArrayView2<f64>, etf: ArrayView2<Vector<f64>>) {}
+
 /// Use a 3x3 [kernel](https://en.wikipedia.org/wiki/Kernel_(image_processing)) to do convolution on an image.
 ///
 /// Edge handling is a kernel crop without compensation.
@@ -121,6 +123,6 @@ mod tests {
         let result = Array::from_iter(conv_3x3(image.view(), kernel.view()))
             .into_shape((image.shape()[0], image.shape()[1]))
             .unwrap();
-        assert_eq!(result[[2, 2]], (1..=9).sum::<usize>() as f64);
+        assert_eq!(result[[1, 1]], (1..=9).sum::<usize>() as f64);
     }
 }
