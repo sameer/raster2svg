@@ -28,7 +28,7 @@ impl<T: PrimInt + Signed + Eq + PartialEq + PartialOrd + Ord + Debug> Ord for Ed
 
 /// Approximate an open loop TSP solution by way of greedy branch elimination + local improvement.
 ///
-/// http://cs.uef.fi/sipu/pub/applsci-11-00177.pdf
+/// <http://cs.uef.fi/sipu/pub/applsci-11-00177.pdf>
 ///
 /// See the two source code comments prefixed with `NOTE:`
 /// for how to use the non-greedy all pairs branch elimination
@@ -247,7 +247,7 @@ impl Distribution<Operator> for Standard {
 ///
 /// Uses random sampling when the path is too long for brute force search.
 ///
-/// https://www.mdpi.com/2076-3417/9/19/3985/pdf
+/// <https://www.mdpi.com/2076-3417/9/19/3985/pdf>
 ///
 fn local_improvement<
     T: PrimInt + Signed + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,

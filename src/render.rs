@@ -1,11 +1,30 @@
-use crate::Style;
+use crate::{etf::edge_tangent_flow, Style};
 use cairo::{Context, Matrix};
 use log::{debug, warn};
-use lyon_geom::{point, LineSegment};
+use lyon_geom::{point, vector, LineSegment, Vector};
 use ndarray::prelude::*;
 use spade::delaunay::IntDelaunayTriangulation;
 
 use crate::voronoi::{calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi};
+
+pub fn render_fdog_based(
+    image: ArrayView2<f64>,
+    super_sample: usize,
+    instrument_diameter_in_pixels: f64,
+    style: Style,
+    ctx: &Context,
+    matrix: Matrix,
+) {
+    let etf = edge_tangent_flow(image);
+    for (pos, vector) in etf.indexed_iter() {
+        ctx.set_line_width(0.1);
+        ctx.set_matrix(matrix);
+        ctx.move_to(pos.0 as f64, pos.1 as f64);
+        ctx.rel_line_to(vector.x, vector.y);
+        ctx.set_matrix(Matrix::identity());
+        ctx.stroke();
+    }
+}
 
 pub fn render_edge_based(
     image: ArrayView2<f64>,
@@ -22,6 +41,8 @@ pub fn render_edge_based(
     };
     let stipple_area = (instrument_diameter_in_pixels / 2.).powi(2) * std::f64::consts::PI;
 
+    let etf = edge_tangent_flow(image);
+
     let zero = point(0., 0.);
     let upper_bound = point((width - 1) as f64, (height - 1) as f64);
 
@@ -37,7 +58,8 @@ pub fn render_edge_based(
         }
         debug!("Jump flooding voronoi");
         let colored_pixels = jump_flooding_voronoi::<_, usize>(&voronoi_sites, width, height);
-        let sites_to_points = colors_to_assignments::<_, usize>(&voronoi_sites, &colored_pixels);
+        let sites_to_points =
+            colors_to_assignments::<_, usize>(&voronoi_sites, colored_pixels.view());
 
         debug!("Linde-Buzo-Gray Stippling");
 
@@ -69,16 +91,26 @@ pub fn render_edge_based(
                 changed = true;
                 continue;
             } else if scaled_density < split_threshold * line_area {
-                let phi_vector = cell_properties.phi_vector.unwrap();
-                // new_sites.push(cell_properties.phi_oriented_segment_through_centroid.unwrap());
+                let mut acc = Vector::zero();
+                for point in points {
+                    acc += etf[*point];
+                }
+                let etf_vector = acc.normalize();
+                let (sin, cos) = (-std::f64::consts::FRAC_PI_2).sin_cos();
+                let flow_vector = vector(
+                    etf_vector.x * cos - etf_vector.y * sin,
+                    etf_vector.x * sin + etf_vector.y * cos,
+                );
                 new_sites.push(LineSegment {
-                    from: (centroid - phi_vector * line_length * 0.5).clamp(zero, upper_bound),
-                    to: (centroid + phi_vector * line_length * 0.5).clamp(zero, upper_bound),
+                    from: (centroid - flow_vector * line_length * 0.5).clamp(zero, upper_bound),
+                    to: (centroid + flow_vector * line_length * 0.5).clamp(zero, upper_bound),
                 });
             } else {
-                if points.len() < 3 {
+                if cell_properties
+                    .phi_oriented_segment_through_centroid
+                    .is_none()
+                {
                     new_sites.push(*site);
-                    warn!("Can't split, there are too few points");
                     continue;
                 }
                 changed = true;
@@ -87,12 +119,12 @@ pub fn render_edge_based(
                     .unwrap();
 
                 new_sites.push(LineSegment {
-                    from: (segment.sample(0.75)).clamp(zero, upper_bound),
-                    to: (segment.sample(1.)).clamp(zero, upper_bound),
+                    from: (segment.sample(0.6)).clamp(zero, upper_bound),
+                    to: (segment.sample(0.8)).clamp(zero, upper_bound),
                 });
                 new_sites.push(LineSegment {
-                    from: (segment.sample(0.)).clamp(zero, upper_bound),
-                    to: (segment.sample(0.25)).clamp(zero, upper_bound),
+                    from: (segment.sample(0.2)).clamp(zero, upper_bound),
+                    to: (segment.sample(0.4)).clamp(zero, upper_bound),
                 });
             }
         }
@@ -109,11 +141,7 @@ pub fn render_edge_based(
     }
 
     debug!("Draw to svg");
-    let sites_to_points = colors_to_assignments::<_, i64>(
-        &voronoi_sites,
-        &jump_flooding_voronoi::<_, i64>(&voronoi_sites, width, height),
-    );
-    for (site, points) in voronoi_sites.iter().zip(sites_to_points.iter()) {
+    for site in voronoi_sites {
         // let properties = calculate_cell_properties(image, &points);
         // if let Some(hull) = properties.hull {
         //     ctx.save();
@@ -141,6 +169,7 @@ pub fn render_edge_based(
     }
 }
 
+/// Run Weighted Linde-Buzo-Gray Stippling and customize the output according to the desired style.
 pub fn render_stipple_based(
     image: ArrayView2<f64>,
     super_sample: usize,
@@ -167,7 +196,7 @@ pub fn render_stipple_based(
         }
         debug!("Jump flooding voronoi");
         let colored_pixels = jump_flooding_voronoi(&voronoi_sites, width, height);
-        let sites_to_points = colors_to_assignments(&voronoi_sites, &colored_pixels);
+        let sites_to_points = colors_to_assignments(&voronoi_sites, colored_pixels.view());
 
         debug!("Linde-Buzo-Gray Stippling");
 
@@ -220,7 +249,10 @@ pub fn render_stipple_based(
                         .to_array(),
                 );
             } else {
-                if points.len() < 3 {
+                if cell_properties
+                    .phi_oriented_segment_through_centroid
+                    .is_none()
+                {
                     new_sites.push(
                         centroid
                             .clamp(zero, upper_bound)
@@ -228,7 +260,6 @@ pub fn render_stipple_based(
                             .cast::<i64>()
                             .to_array(),
                     );
-                    warn!("Can't split, there are too few points");
                     continue;
                 }
 
@@ -299,7 +330,7 @@ pub fn render_stipple_based(
             debug!("Draw to svg");
             let sites_to_points = colors_to_assignments(
                 &voronoi_sites,
-                &jump_flooding_voronoi(&voronoi_sites, width, height),
+                jump_flooding_voronoi(&voronoi_sites, width, height).view(),
             );
             for points in sites_to_points {
                 let properties = calculate_cell_properties(image, &points);

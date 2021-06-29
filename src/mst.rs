@@ -28,7 +28,7 @@ impl<T: PrimInt + Signed + PartialEq + Eq + PartialOrd + Ord + Debug> Ord for Pr
 
 /// Given the delaunay triangulation of 2D points, compute the MST with Prim's algorithm in O(E log(v)) time.
 ///
-/// https://en.wikipedia.org/wiki/Euclidean_minimum_spanning_tree#Algorithms_for_computing_EMSTs_in_two_dimensions
+/// <https://en.wikipedia.org/wiki/Euclidean_minimum_spanning_tree#Algorithms_for_computing_EMSTs_in_two_dimensions>
 pub fn compute_mst<T>(
     points: &[[T; 2]],
     delaunay: &IntDelaunayTriangulation<[i64; 2], DelaunayTreeLocate<[i64; 2]>>,

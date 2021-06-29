@@ -4,7 +4,7 @@ use num_traits::PrimInt;
 
 /// Andrew's monotone chain convex hull algorithm
 ///
-/// https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain
+/// <https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain>
 pub fn convex_hull<T: PrimInt + Debug>(points: &[[T; 2]]) -> Vec<[T; 2]> {
     let mut lower = Vec::with_capacity(points.len() / 2);
     for point in points {

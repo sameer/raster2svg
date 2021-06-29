@@ -7,11 +7,15 @@ use num_traits::{FromPrimitive, PrimInt, Signed};
 
 use crate::abs_distance_squared;
 
+mod hull;
+
+/// An arbitrary Voronoi site with 0, 1, or 2 dimensions.
 pub trait Site<T: PrimInt + FromPrimitive + Debug> {
     fn dist(&self, point: [T; 2]) -> f64;
     fn seeds(&self, width: usize, height: usize) -> Vec<[T; 2]>;
 }
 
+/// 0D site (point)
 impl<T> Site<T> for [T; 2]
 where
     T: PrimInt + Signed + FromPrimitive + Debug,
@@ -24,6 +28,7 @@ where
     }
 }
 
+/// 1D site (line segment)
 impl<T> Site<T> for LineSegment<f64>
 where
     T: PrimInt + FromPrimitive + Debug,
@@ -75,7 +80,7 @@ where
 /// return the assignment of coordinates in that box to their nearest neighbor
 /// using the Jump Flooding Algorithm.
 ///
-/// https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf
+/// <https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf>
 pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitive + Debug>(
     sites: &[S],
     width: usize,
@@ -199,6 +204,45 @@ pub struct CellProperties<T: PrimInt + Debug + Default> {
     pub phi_oriented_segment_through_centroid: Option<LineSegment<f64>>,
 }
 
+/// Andrew's monotone chain convex hull algorithm
+///
+/// <https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain>
+pub fn convex_hull<T: PrimInt + Debug>(points: &[[T; 2]]) -> Vec<[T; 2]> {
+    let mut lower = Vec::with_capacity(points.len() / 2);
+    for point in points {
+        while lower.len() >= 2
+            && !is_counter_clockwise(lower[lower.len() - 2], lower[lower.len() - 1], *point)
+        {
+            lower.pop();
+        }
+        lower.push(*point);
+    }
+    let mut upper = Vec::with_capacity(points.len() / 2);
+    for point in points.iter().rev() {
+        while upper.len() >= 2
+            && !is_counter_clockwise(upper[upper.len() - 2], upper[upper.len() - 1], *point)
+        {
+            upper.pop();
+        }
+        upper.push(*point);
+    }
+    upper.pop();
+    lower.pop();
+    lower.append(&mut upper);
+    lower
+}
+
+/// Check whether there is a counter-clockwise turn using the cross product of ca and cb interpreted as 3D vectors.
+fn is_counter_clockwise<T: PrimInt + Debug>(a: [T; 2], b: [T; 2], c: [T; 2]) -> bool {
+    let positive = a[0] * b[1] + c[0] * c[1] + a[1] * c[0] + c[1] * b[0];
+    let negative = a[0] * c[1] + c[0] * b[1] + a[1] * b[0] + c[1] * c[0];
+    positive
+        .checked_sub(&negative)
+        .map(|x| x > T::zero())
+        .unwrap_or(false)
+}
+
+
 pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
     image: ArrayView2<f64>,
     points: &[[T; 2]],
@@ -225,7 +269,7 @@ pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
         const HULL_EPSILON: f64 = 1E-4;
 
         if points.len() >= 3 {
-            let hull = crate::hull::convex_hull(points);
+            let hull = hull::convex_hull(points);
             // Hull may not be valid if points were collinear, or the centroid may lie directly on a vertex
             if hull.len() >= 3
                 && !hull.iter().any(|vertex| {

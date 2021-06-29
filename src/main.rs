@@ -17,13 +17,19 @@ use structopt::StructOpt;
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
-use crate::render::{render_edge_based, render_stipple_based};
+use crate::render::{render_edge_based, render_fdog_based, render_stipple_based};
 
+/// Adjust image color
 mod color;
-mod hull;
+/// Compute the Edge Tangent Flow
+mod etf;
+/// Find the [Minimum Spanning Tree (MST)](https://en.wikipedia.org/wiki/Minimum_spanning_tree)
 mod mst;
+/// Routines for creating the final SVG using [Cairo](cairographics.org)
 mod render;
+/// Solve the [Traveling Salesman Problem (TSP)](https://en.wikipedia.org/wiki/Travelling_salesman_problem)
 mod tsp;
+/// Construct the [Voronoi diagram](https://en.wikipedia.org/wiki/Voronoi_diagram) and calculate related properties
 mod voronoi;
 
 #[derive(Debug, StructOpt)]
@@ -184,7 +190,9 @@ fn main() -> io::Result<()> {
             pen_image
                 .slice_mut(s![3, .., ..])
                 .assign(&image_in_cielab.slice(s![0, .., ..]));
-            pen_image.slice_mut(s![3, .., ..]).mapv_inplace(|v| 1.0 - v);
+            pen_image
+                .slice_mut(s![3, .., ..])
+                .par_mapv_inplace(|v| 1.0 - v);
         }
         // RGB
         match opt.color_model {
@@ -311,9 +319,25 @@ fn main() -> io::Result<()> {
                     mat
                 },
             ),
+            _ => {
+                render_fdog_based(
+                    pen_image.slice(s![k, .., ..]),
+                    opt.super_sample,
+                    instrument_diameter_in_pixels,
+                    opt.style,
+                    &ctx,
+                    {
+                        let mut mat = Matrix::identity();
+                        mat.scale(
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                            1.0 / dots_per_mm / opt.super_sample as f64,
+                        );
+                        mat
+                    },
+                );
+            }
         }
     }
-
     Ok(())
 }
 
@@ -328,39 +352,4 @@ fn abs_distance_squared<T: PrimInt + Signed + Debug>(a: [T; 2], b: [T; 2]) -> T 
         y_diff
     );
     x_diff.pow(2) + y_diff.pow(2)
-}
-
-#[cfg(test)]
-#[test]
-fn ramp_to_average() {
-    // let image = ImageReader::open("ramp_sites_corrected.png")
-    //     .unwrap()
-    //     .decode()
-    //     .expect("not an image")
-    //     .to_rgb16();
-
-    // let image = Array::from_iter(
-    //     image
-    //         .pixels()
-    //         .map(|p| p.0.iter().copied())
-    //         .flatten()
-    //         .map(|p| p as f64 / u16::MAX as f64),
-    // )
-    // .into_shape((image.height() as usize, image.width() as usize, 3))
-    // .unwrap()
-    // .reversed_axes();
-    // println!(
-    //     "{:?}",
-    //     (0..5120)
-    //         .map(|x| {
-    //             let mut sum = 0.0f64;
-    //             for i in 10 * x..10 * (x + 1) {
-    //                 for j in 0..2000 {
-    //                     sum += image[[0, i, j]];
-    //                 }
-    //             }
-    //             sum / (2000. * 10.)
-    //         })
-    //         .collect::<Vec<_>>()
-    // );
 }

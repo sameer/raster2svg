@@ -1,6 +1,9 @@
 use ndarray::prelude::*;
 use ndarray::Array3;
 
+/// sRGB to Hue, Saturation, Lightness (HSL)
+///
+/// <https://en.wikipedia.org/wiki/HSL_and_HSV#From_RGB>
 pub fn srgb_to_hsl(srgb: &Array3<f64>) -> Array3<f64> {
     let mut hsl = Array::zeros((3, srgb.shape()[1], srgb.shape()[2]));
     hsl.slice_mut(s![0, .., ..])
@@ -41,7 +44,11 @@ pub fn srgb_to_hsl(srgb: &Array3<f64>) -> Array3<f64> {
     hsl
 }
 
-/// Convert sRGB under D65 illuminant to CIEXYZ under D50 illuminant
+/// sRGB under D65 illuminant to CIEXYZ under D50 illuminant
+///
+/// <https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation_(sRGB_to_CIE_XYZ)>
+///
+/// <http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html>
 pub fn srgb_to_ciexyz(srgb: &Array3<f64>) -> Array3<f64> {
     let mut ciexyz = Array::zeros((3, srgb.shape()[1], srgb.shape()[2]));
 
@@ -68,7 +75,9 @@ pub fn srgb_to_ciexyz(srgb: &Array3<f64>) -> Array3<f64> {
     ciexyz
 }
 
-/// CIEXYZ to CIELAB both under D50 illuminant
+/// CIEXYZ to CIELAB, both under D50 illuminant
+///
+/// <https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB>
 pub fn ciexyz_to_cielab(ciexyz: &Array3<f64>) -> Array3<f64> {
     let mut cielab = Array::zeros((3, ciexyz.shape()[1], ciexyz.shape()[2]));
     cielab
