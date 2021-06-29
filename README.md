@@ -1,7 +1,7 @@
 # raster2svg
 
 [![raster2svg](https://github.com/sameer/raster2svg/actions/workflows/rust.yml/badge.svg)](https://github.com/sameer/raster2svg/actions/workflows/rust.yml)
-[![codecov](https://codecov.io/gh/sameer/raster2svg/branch/master/graph/badge.svg)](https://codecov.io/gh/sameer/raster2svg)
+[![codecov](https://codecov.io/gh/sameer/raster2svg/branch/main/graph/badge.svg?token=85CHPyYu7y)](https://codecov.io/gh/sameer/raster2svg)
 
 Convert raster graphics into stylistic art renderings. The output of this program is intended for direct use with [svg2gcode](https://github.com/sameer/svg2gcode) to draw with a pen plotter.
 
