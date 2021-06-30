@@ -68,6 +68,11 @@ Notice for lawyers: no papers are hosted here, they are all provided by the auth
 * Which Local Search Operator Works Best for the Open-Loop TSP? https://www.mdpi.com/2076-3417/9/19/3985/pdf
 * TSP Art https://archive.bridgesmathart.org/2005/bridges2005-301.pdf
 
+## Edges + Hatching
+
+* Flow-Based Image Abstraction http://www.cs.umsl.edu/~kang/Papers/kang_tvcg09.pdf
+* Coherent Line Drawing http://umsl.edu/cmpsci/about/People/Faculty/HenryKang/coon.pdf
+
 ## Honorable mentions
 
 There are also some noteworthy papers that while interesting did not directly influence raster2svg (yet!).
@@ -92,8 +97,8 @@ There are also some noteworthy papers that while interesting did not directly in
 * LinesLab: A Flexible Low\u2010Cost Approach for the Generation of Physical Monochrome Art https://vis.uib.no/wp-content/papercite-data/pdfs/Stoppel-2019-LFL.pdf
 * State of the "Art": A Taxonomy of Artistic Stylization Techniques for Images and Video http://epubs.surrey.ac.uk/721461/1/Collomosse-TVCG-2012.pdf
 * XDoG: Advanced Image Stylization with eXtended Difference-of-Gaussians https://sci-hub.st/10.1145/2024676.2024700
-* Flow-Based Image Abstraction http://www.cs.umsl.edu/~kang/Papers/kang_tvcg09.pdf
 * Colored Pencil Filter with Custom Colors https://sci-hub.st/https://doi.org/10.1109/PCCGA.2004.1348364
 * PencilArt: A Chromatic Penciling Style Generation Framework https://sci-hub.st/https://doi.org/10.1111/cgf.13334
 * A Texture-Based Approach for Hatching Color Photographs https://sci-hub.st/https://doi.org/10.1007/978-3-642-17289-2_9
 * Perception-Motivated High-Quality Stylization https://curve.carleton.ca/system/files/etd/e1a12c4d-890e-4626-8f57-768f661f3121/etd_pdf/10e988374e6e4a31b58b17568881b47f/li-perceptionmotivatedhighqualitystylization.pdf
+* Abstract line drawings from photographs using flow-based filters https://sci-hub.st/https://doi.org/10.1016/j.cag.2012.02.011

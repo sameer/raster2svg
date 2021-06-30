@@ -5,7 +5,7 @@ use ndarray::Array3;
 ///
 /// <https://en.wikipedia.org/wiki/HSL_and_HSV#From_RGB>
 pub fn srgb_to_hsl(srgb: &Array3<f64>) -> Array3<f64> {
-    let mut hsl = Array::zeros((3, srgb.shape()[1], srgb.shape()[2]));
+    let mut hsl = Array3::zeros((3, srgb.shape()[1], srgb.shape()[2]));
     hsl.slice_mut(s![0, .., ..])
         .assign(&srgb.map_axis(Axis(0), |rgb| {
             let v = rgb[0].max(rgb[1]).max(rgb[2]);
@@ -50,7 +50,7 @@ pub fn srgb_to_hsl(srgb: &Array3<f64>) -> Array3<f64> {
 ///
 /// <http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html>
 pub fn srgb_to_ciexyz(srgb: &Array3<f64>) -> Array3<f64> {
-    let mut ciexyz = Array::zeros((3, srgb.shape()[1], srgb.shape()[2]));
+    let mut ciexyz = Array3::zeros((3, srgb.shape()[1], srgb.shape()[2]));
 
     const X_COEFFICIENTS: [f64; 3] = [0.4360747, 0.3850649, 0.1430804];
     const Y_COEFFICIENTS: [f64; 3] = [0.2225045, 0.7168786, 0.0606169];
@@ -79,7 +79,7 @@ pub fn srgb_to_ciexyz(srgb: &Array3<f64>) -> Array3<f64> {
 ///
 /// <https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB>
 pub fn ciexyz_to_cielab(ciexyz: &Array3<f64>) -> Array3<f64> {
-    let mut cielab = Array::zeros((3, ciexyz.shape()[1], ciexyz.shape()[2]));
+    let mut cielab = Array3::zeros((3, ciexyz.shape()[1], ciexyz.shape()[2]));
     cielab
         .slice_mut(s![0, .., ..])
         .assign(&ciexyz.map_axis(Axis(0), |xyz| {

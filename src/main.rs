@@ -183,7 +183,7 @@ fn main() -> io::Result<()> {
 
         let image_in_cielab = ciexyz_to_cielab(&srgb_to_ciexyz(&image));
         let mut pen_image: Array3<f64> =
-            Array::zeros((4, image_in_cielab.shape()[1], image_in_cielab.shape()[2]));
+            Array3::zeros((4, image_in_cielab.shape()[1], image_in_cielab.shape()[2]));
 
         // Key
         {
@@ -276,7 +276,7 @@ fn main() -> io::Result<()> {
     ctx.set_line_join(LineJoin::Round);
     ctx.set_line_width(instrument_diameter);
 
-    for k in 3..=3 {
+    for k in 0..=3 {
         info!("Processing {}", k);
         if k == 0 {
             ctx.set_source_rgb(1., 0., 0.);
@@ -289,21 +289,25 @@ fn main() -> io::Result<()> {
         }
 
         match opt.style {
-            Style::EdgesPlusHatching => render_fdog_based(
-                pen_image.slice(s![k, .., ..]),
-                opt.super_sample,
-                instrument_diameter_in_pixels,
-                opt.style,
-                &ctx,
-                {
-                    let mut mat = Matrix::identity();
-                    mat.scale(
-                        1.0 / dots_per_mm / opt.super_sample as f64,
-                        1.0 / dots_per_mm / opt.super_sample as f64,
-                    );
-                    mat
-                },
-            ),
+            Style::EdgesPlusHatching => {
+                if k == 3 {
+                    render_fdog_based(
+                        pen_image.slice(s![k, .., ..]),
+                        opt.super_sample,
+                        instrument_diameter_in_pixels,
+                        opt.style,
+                        &ctx,
+                        {
+                            let mut mat = Matrix::identity();
+                            mat.scale(
+                                1.0 / dots_per_mm / opt.super_sample as f64,
+                                1.0 / dots_per_mm / opt.super_sample as f64,
+                            );
+                            mat
+                        },
+                    )
+                }
+            }
             _ => render_stipple_based(
                 pen_image.slice(s![k, .., ..]),
                 opt.super_sample,
