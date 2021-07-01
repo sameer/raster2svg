@@ -3,7 +3,7 @@ use color::{ciexyz_to_cielab, srgb_to_ciexyz, srgb_to_hsl};
 use image::io::Reader as ImageReader;
 use log::*;
 use lyon_geom::vector;
-use ndarray::prelude::*;
+use ndarray::{prelude::*, SliceInfo, SliceInfoElem};
 use num_traits::{PrimInt, Signed};
 use std::{
     env,
@@ -328,6 +328,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+/// Square of the Euclidean distance between signed 2D coordinates
 #[inline]
 fn abs_distance_squared<T: PrimInt + Signed + Debug>(a: [T; 2], b: [T; 2]) -> T {
     let x_diff = a[0] - b[0];
@@ -339,4 +340,24 @@ fn abs_distance_squared<T: PrimInt + Signed + Debug>(a: [T; 2], b: [T; 2]) -> T 
         y_diff
     );
     x_diff.pow(2) + y_diff.pow(2)
+}
+
+/// Utility function for applying windowed offset functions on a 2D ndarray array
+#[inline]
+pub(crate) fn get_slice_info_for_offset(
+    x: i32,
+    y: i32,
+) -> SliceInfo<[SliceInfoElem; 2], Dim<[usize; 2]>, Dim<[usize; 2]>> {
+    match (x.signum(), y.signum()) {
+        (-1, -1) => (s![x.abs().., y.abs()..]),
+        (0, -1) => s![.., y.abs()..],
+        (-1, 0) => s![x.abs().., ..],
+        (0, 0) => s![.., ..],
+        (1, 0) => s![..-x, ..],
+        (0, 1) => s![.., ..-y],
+        (-1, 1) => s![x.abs().., ..-y],
+        (1, -1) => s![..-x, y.abs()..],
+        (1, 1) => s![..-x, ..-y],
+        _ => unreachable!(),
+    }
 }

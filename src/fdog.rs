@@ -3,6 +3,8 @@ use lyon_geom::Vector;
 use ndarray::par_azip;
 use ndarray::prelude::*;
 
+use crate::get_slice_info_for_offset;
+
 /// Construct the edge tangent flow using the [Sobel operator](https://en.wikipedia.org/wiki/Sobel_operator)
 ///
 /// Sobel operator kernel is [Scharr's frequently used kernel](https://en.wikipedia.org/wiki/Sobel_operator#Alternative_operators).
@@ -49,25 +51,12 @@ pub fn edge_tangent_flow(image: ArrayView2<f64>) -> Array2<Vector<f64>> {
 
     let radius = 3;
 
-    let slice_info_fn = |x: isize, y: isize| match (x.signum(), y.signum()) {
-        (-1, -1) => (s![x.abs().., y.abs()..]),
-        (0, -1) => s![.., y.abs()..],
-        (-1, 0) => s![x.abs().., ..],
-        (0, 0) => s![.., ..],
-        (1, 0) => s![..-x, ..],
-        (0, 1) => s![.., ..-y],
-        (-1, 1) => s![x.abs().., ..-y],
-        (1, -1) => s![..-x, y.abs()..],
-        (1, 1) => s![..-x, ..-y],
-        _ => unreachable!(),
-    };
-
     for _ in 0..3 {
         let mut t_prime = Array2::from_elem((width, height), Vector::zero());
         for i in -radius..=radius {
             for j in -radius..=radius {
-                let center_slice = slice_info_fn(i, j);
-                let kernel_slice = slice_info_fn(-i, -j);
+                let center_slice = get_slice_info_for_offset(i, j);
+                let kernel_slice = get_slice_info_for_offset(-i, -j);
                 par_azip! {(t_prime_x in &mut t_prime.slice_mut(center_slice), t_y in t.slice(kernel_slice), t_x in t.slice(center_slice), ĝ_y in ĝ.slice(kernel_slice), ĝ_x in ĝ.slice(center_slice)) {
                         let w_s = if i.pow(2) + j.pow(2) < radius.pow(2) { 1. } else { 0. };
                         // Some implementations use tanh here. This is only required if the fall-off rate is greater than 1.

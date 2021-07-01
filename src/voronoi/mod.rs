@@ -5,7 +5,7 @@ use lyon_geom::{point, vector, Angle, Line, LineSegment, Point, Vector};
 use ndarray::{par_azip, prelude::*};
 use num_traits::{FromPrimitive, PrimInt, Signed};
 
-use crate::abs_distance_squared;
+use crate::{abs_distance_squared, get_slice_info_for_offset};
 
 mod hull;
 
@@ -113,24 +113,15 @@ pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitiv
         .map(|x| x / 2)
         .unwrap_or_else(|| (width.max(height) / 2).next_power_of_two());
 
-    let slice_info_fn = |x_dir, y_dir, step: isize| match (x_dir, y_dir) {
-        (-1, -1) => (s![step.., step..]),
-        (0, -1) => s![.., step..],
-        (-1, 0) => s![step.., ..],
-        (0, 0) => s![.., ..],
-        (1, 0) => s![..-step, ..],
-        (0, 1) => s![.., ..-step],
-        (-1, 1) => s![step.., ..-step],
-        (1, -1) => s![..-step, step..],
-        (1, 1) => s![..-step, ..-step],
-        _ => unreachable!(),
-    };
-
     while round_step != 0 {
         for y_dir in -1..=1 {
             for x_dir in -1..=1 {
-                let center_slice_info = slice_info_fn(x_dir, y_dir, round_step as isize);
-                let kernel_slice_info = slice_info_fn(-x_dir, -y_dir, round_step as isize);
+                let center_slice_info =
+                    get_slice_info_for_offset(x_dir * round_step as i32, y_dir * round_step as i32);
+                let kernel_slice_info = get_slice_info_for_offset(
+                    -x_dir * round_step as i32,
+                    -y_dir * round_step as i32,
+                );
                 par_azip! {
                     (dest in scratchpad.slice_mut(center_slice_info), sample in grid.slice(kernel_slice_info), here in positions.slice(center_slice_info)) {
                         let here = [T::from_usize(here[0]).unwrap(), T::from_usize(here[1]).unwrap()];
