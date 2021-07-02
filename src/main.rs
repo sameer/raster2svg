@@ -181,7 +181,7 @@ fn main() -> io::Result<()> {
         .unwrap()
         .reversed_axes();
 
-        let image_in_cielab = ciexyz_to_cielab(&srgb_to_ciexyz(&image));
+        let image_in_cielab = ciexyz_to_cielab(srgb_to_ciexyz(image.view()).view());
         let mut pen_image: Array3<f64> =
             Array3::zeros((4, image_in_cielab.shape()[1], image_in_cielab.shape()[2]));
 
@@ -217,7 +217,7 @@ fn main() -> io::Result<()> {
                     }));
             }),
             ColorModel::Hsl => {
-                let image_in_hsl = srgb_to_hsl(&image);
+                let image_in_hsl = srgb_to_hsl(image.view());
                 [
                     vector(1.0, 0.0),
                     vector(-0.5, 3.0f64.sqrt() / 2.0),
@@ -266,7 +266,7 @@ fn main() -> io::Result<()> {
         None => cairo::SvgSurface::for_stream(width, height, std::io::stdout()).unwrap(),
     };
     surf.set_document_unit(SvgUnit::Mm);
-    let ctx = Context::new(&surf);
+    let ctx = Context::new(&surf).unwrap();
 
     ctx.set_source_rgb(1., 1., 1.);
     ctx.rectangle(0., 0., width, height);

@@ -4,8 +4,8 @@ use ndarray::Array3;
 /// sRGB to Hue, Saturation, Lightness (HSL)
 ///
 /// <https://en.wikipedia.org/wiki/HSL_and_HSV#From_RGB>
-pub fn srgb_to_hsl(srgb: &Array3<f64>) -> Array3<f64> {
-    let mut hsl = Array3::zeros((3, srgb.shape()[1], srgb.shape()[2]));
+pub fn srgb_to_hsl(srgb: ArrayView3<f64>) -> Array3<f64> {
+    let mut hsl = srgb.to_owned();
     hsl.slice_mut(s![0, .., ..])
         .assign(&srgb.map_axis(Axis(0), |rgb| {
             let v = rgb[0].max(rgb[1]).max(rgb[2]);
@@ -49,28 +49,34 @@ pub fn srgb_to_hsl(srgb: &Array3<f64>) -> Array3<f64> {
 /// <https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation_(sRGB_to_CIE_XYZ)>
 ///
 /// <http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html>
-pub fn srgb_to_ciexyz(srgb: &Array3<f64>) -> Array3<f64> {
+pub fn srgb_to_ciexyz(srgb: ArrayView3<f64>) -> Array3<f64> {
     let mut ciexyz = Array3::zeros((3, srgb.shape()[1], srgb.shape()[2]));
 
     const X_COEFFICIENTS: [f64; 3] = [0.4360747, 0.3850649, 0.1430804];
     const Y_COEFFICIENTS: [f64; 3] = [0.2225045, 0.7168786, 0.0606169];
     const Z_COEFFICIENTS: [f64; 3] = [0.0139322, 0.0971045, 0.7141733];
-    [X_COEFFICIENTS, Y_COEFFICIENTS, Z_COEFFICIENTS]
-        .iter()
-        .enumerate()
-        .for_each(|(i, coefficients)| {
-            ciexyz
-                .slice_mut(s![i, .., ..])
-                .assign(&srgb.map_axis(Axis(0), |rgb| {
-                    rgb.iter()
-                        .copied()
-                        .map(gamma_expand_rgb)
+
+    for i in 0..ciexyz.shape()[1] {
+        for j in 0..ciexyz.shape()[2] {
+            let gamma_expanded = srgb
+                .slice(s![.., i, j])
+                .iter()
+                .copied()
+                .map(gamma_expand_rgb)
+                .collect::<Vec<_>>();
+            [X_COEFFICIENTS, Y_COEFFICIENTS, Z_COEFFICIENTS]
+                .iter()
+                .enumerate()
+                .for_each(|(k, coefficients)| {
+                    ciexyz[[k, i, j]] = gamma_expanded
+                        .iter()
                         .zip(coefficients)
                         .map(|(component, coefficient)| component * coefficient)
                         .sum::<f64>()
-                        .clamp(0., 1.0)
-                }));
-        });
+                        .clamp(0., 1.0);
+                });
+        }
+    }
 
     ciexyz
 }
@@ -78,7 +84,7 @@ pub fn srgb_to_ciexyz(srgb: &Array3<f64>) -> Array3<f64> {
 /// CIEXYZ to CIELAB, both under D50 illuminant
 ///
 /// <https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB>
-pub fn ciexyz_to_cielab(ciexyz: &Array3<f64>) -> Array3<f64> {
+pub fn ciexyz_to_cielab(ciexyz: ArrayView3<f64>) -> Array3<f64> {
     let mut cielab = Array3::zeros((3, ciexyz.shape()[1], ciexyz.shape()[2]));
     cielab
         .slice_mut(s![0, .., ..])
@@ -136,6 +142,6 @@ fn check_srgb_to_cielab() {
         [0.0, 0.0, 0.0]
     ]]
     .reversed_axes();
-    dbg!(ciexyz_to_cielab(&srgb_to_ciexyz(&arr)).reversed_axes());
-    dbg!(srgb_to_hsl(&arr).reversed_axes());
+    dbg!(ciexyz_to_cielab(srgb_to_ciexyz(arr.view()).view()).reversed_axes());
+    dbg!(srgb_to_hsl(arr.view()).reversed_axes());
 }
