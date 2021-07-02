@@ -1,5 +1,5 @@
 use crate::{
-    fdog::{edge_tangent_flow, flow_based_difference_of_gaussians},
+    flow_filter::{edge_tangent_flow, flow_based_difference_of_gaussians},
     voronoi::{calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi},
     Style,
 };
@@ -23,7 +23,8 @@ pub fn render_fdog_based(
     let etf = edge_tangent_flow(image.view());
     let fdog = flow_based_difference_of_gaussians(image.view(), etf.view());
     for (pos, value) in fdog.indexed_iter() {
-        if *value < 0.5 {
+        if *value < 1.0 {
+            ctx.set_source_rgb(*value, *value, *value);
             ctx.set_matrix(matrix);
             ctx.move_to(pos.0 as f64, pos.1 as f64);
             ctx.rectangle(pos.0 as f64, pos.1 as f64, 1.0, 1.0);
