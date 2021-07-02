@@ -102,3 +102,6 @@ There are also some noteworthy papers that while interesting did not directly in
 * A Texture-Based Approach for Hatching Color Photographs https://sci-hub.st/https://doi.org/10.1007/978-3-642-17289-2_9
 * Perception-Motivated High-Quality Stylization https://curve.carleton.ca/system/files/etd/e1a12c4d-890e-4626-8f57-768f661f3121/etd_pdf/10e988374e6e4a31b58b17568881b47f/li-perceptionmotivatedhighqualitystylization.pdf
 * Abstract line drawings from photographs using flow-based filters https://sci-hub.st/https://doi.org/10.1016/j.cag.2012.02.011
+* LSD: a Line Segment Detector https://api.semanticscholar.org/CorpusID:5847178
+* The Multiscale Line Segment Detector https://hal-enpc.archives-ouvertes.fr/hal-01571615/file/workshop_mlsd.pdf
+* An extended flow-based difference-of-Gaussians method of line drawing for polyhedral image https://sci-hub.st/https://doi.org/10.1016/J.IJLEO.2014.05.031
