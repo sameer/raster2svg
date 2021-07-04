@@ -8,7 +8,7 @@ description = "Convert raster graphics to stylish SVGs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cairo-rs = { version = "^0", features = ["svg", "v1_16"] }
+cairo-rs = { version = "^0", default-features = false, features = ["svg", "v1_16"] }
 image = { version = "0.23", features = ["jpeg", "png", "tiff", "bmp"] }
 structopt = "0.3"
 log = "0"
