@@ -21,14 +21,14 @@ use crate::render::{render_fdog_based, render_stipple_based};
 
 /// Adjust image color
 mod color;
-/// Calculations necessary for the Flow-based Difference for Gaussians (FDoG) family of algorithms
+/// Image filter algorithms (i.e. Sobel operator, FDoG, ETF)
 mod flow_filter;
-/// Find the [Minimum Spanning Tree (MST)](https://en.wikipedia.org/wiki/Minimum_spanning_tree)
-mod mst;
+/// Line segment drawing and related algorithms
+mod lsd;
 /// Routines for creating the final SVG using [Cairo](cairographics.org)
 mod render;
-/// Solve the [Traveling Salesman Problem (TSP)](https://en.wikipedia.org/wiki/Travelling_salesman_problem)
-mod tsp;
+/// Graph algorithms
+mod graph;
 /// Construct the [Voronoi diagram](https://en.wikipedia.org/wiki/Voronoi_diagram) and calculate related properties
 mod voronoi;
 
@@ -182,8 +182,11 @@ fn main() -> io::Result<()> {
         .reversed_axes();
 
         let image_in_cielab = ciexyz_to_cielab(srgb_to_ciexyz(image.view()).view());
-        let mut pen_image: Array3<f64> =
-            Array3::zeros((4, image_in_cielab.shape()[1], image_in_cielab.shape()[2]));
+        let mut pen_image: Array3<f64> = Array3::zeros((
+            4,
+            image_in_cielab.raw_dim()[1],
+            image_in_cielab.raw_dim()[2],
+        ));
 
         // Key
         {

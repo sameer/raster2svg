@@ -1,8 +1,4 @@
-use crate::{
-    flow_filter::{edge_tangent_flow, flow_based_difference_of_gaussians},
-    voronoi::{calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi},
-    Style,
-};
+use crate::{Style, flow_filter::{edge_tangent_flow, flow_based_difference_of_gaussians}, graph::{mst, tsp}, voronoi::{calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi}};
 use cairo::{Context, Matrix};
 use log::{debug, warn};
 use lyon_geom::point;
@@ -217,7 +213,7 @@ pub fn render_stipple_based(
                     ctx.stroke();
                 }
             } else {
-                let tree = crate::mst::compute_mst(&voronoi_sites, &delaunay);
+                let tree = mst::compute_mst(&voronoi_sites, &delaunay);
                 if let Style::Mst = style {
                     debug!("Draw to svg");
                     ctx.set_matrix(matrix);
@@ -231,7 +227,7 @@ pub fn render_stipple_based(
                         ctx.stroke();
                     }
                 } else {
-                    let tsp = crate::tsp::approximate_tsp_with_mst(&voronoi_sites, &tree);
+                    let tsp = tsp::approximate_tsp_with_mst(&voronoi_sites, &tree);
                     debug!("Draw to svg");
                     ctx.set_matrix(matrix);
                     if let Some(first) = tsp.first() {
