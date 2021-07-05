@@ -43,7 +43,10 @@ Notice for lawyers: no papers are hosted here, they are all provided by the auth
 
 ## Preprocessing
 
-* RGB/XYZ Matrices http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
+* Color conversion matrices https://github.com/colour-science/colour/
+* https://en.wikipedia.org/wiki/SRGB
+* https://en.wikipedia.org/wiki/CIE_1931_color_space
+* https://en.wikipedia.org/wiki/CIELAB_color_space
 * From Stippling to Scribbling http://archive.bridgesmathart.org/2015/bridges2015-267.pdf
 
 ## Stippling
