@@ -108,3 +108,7 @@ There are also some noteworthy papers that while interesting did not directly in
 * LSD: a Line Segment Detector https://api.semanticscholar.org/CorpusID:5847178
 * The Multiscale Line Segment Detector https://hal-enpc.archives-ouvertes.fr/hal-01571615/file/workshop_mlsd.pdf
 * An extended flow-based difference-of-Gaussians method of line drawing for polyhedral image https://sci-hub.st/https://doi.org/10.1016/J.IJLEO.2014.05.031
+* Edge Drawing: A combined real-time edge and segment detector http://c-viz.eskisehir.edu.tr/pdfs/ED.pdf
+* A Parameterless Line Segment and Elliptical Arc Detector with Enhanced Ellipse Fitting https://sci-hub.st/https://doi.org/10.1007/978-3-642-33709-3_41
+* EDLines: A real-time line segment detector with a false detection control https://sci-hub.st/https://doi.org/10.1016/j.patrec.2011.06.001
+* EDCircles: A real-time circle detector with a false detection control https://sci-hub.st/https://doi.org/10.1016/j.patcog.2012.09.020
