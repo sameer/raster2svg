@@ -22,7 +22,7 @@ use crate::render::{render_fdog_based, render_stipple_based};
 /// Adjust image color
 mod color;
 /// Image filter algorithms (i.e. Sobel operator, FDoG, ETF)
-mod flow_filter;
+mod filter;
 /// Line segment drawing and related algorithms
 mod lsd;
 /// Routines for creating the final SVG using [Cairo](cairographics.org)
@@ -345,22 +345,22 @@ fn abs_distance_squared<T: PrimInt + Signed + Debug>(a: [T; 2], b: [T; 2]) -> T 
     x_diff.pow(2) + y_diff.pow(2)
 }
 
-/// Utility function for applying windowed offset functions on a 2D ndarray array
+/// Utility function for applying windowed offset functions like convolution on a 2D ndarray array
 #[inline]
 pub(crate) fn get_slice_info_for_offset(
     x: i32,
     y: i32,
 ) -> SliceInfo<[SliceInfoElem; 2], Dim<[usize; 2]>, Dim<[usize; 2]>> {
     match (x.signum(), y.signum()) {
-        (-1, -1) => (s![x.abs().., y.abs()..]),
-        (0, -1) => s![.., y.abs()..],
-        (-1, 0) => s![x.abs().., ..],
+        (-1, -1) => (s![..x, ..y]),
+        (0, -1) => s![.., ..y],
+        (-1, 0) => s![..x, ..],
         (0, 0) => s![.., ..],
-        (1, 0) => s![..-x, ..],
-        (0, 1) => s![.., ..-y],
-        (-1, 1) => s![x.abs().., ..-y],
-        (1, -1) => s![..-x, y.abs()..],
-        (1, 1) => s![..-x, ..-y],
+        (1, 0) => s![x.., ..],
+        (0, 1) => s![.., y..],
+        (-1, 1) => s![..x, y..],
+        (1, -1) => s![x.., ..y],
+        (1, 1) => s![x.., y..],
         _ => unreachable!(),
     }
 }

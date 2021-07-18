@@ -14,10 +14,26 @@ use crate::get_slice_info_for_offset;
 /// <https://en.wikipedia.org/wiki/Normal_distribution#/media/File:Standard_deviation_diagram.svg>
 const NUM_STANDARD_DEVIATIONS: f64 = 3.;
 
-/// [Scharr operator](https://en.wikipedia.org/wiki/Sobel_operator#Alternative_operators) with better rotational symmetry.
-const SOBEL_X: [[f64; 3]; 3] = [[3., 0., -3.], [10., 0., -10.], [3., 0., -3.]];
+/// [Sobel operator](https://en.wikipedia.org/wiki/Sobel_operator)
+///
+/// Edge handling is a kernel crop without compensation.
+pub fn sobel_operator(image: ArrayView2<f64>) -> Array2<Vector<f64>> {
+    /// [Scharr operator](https://en.wikipedia.org/wiki/Sobel_operator#Alternative_operators) with better rotational symmetry.
+    const SOBEL_X: [f64; 9] = [3., 0., -3., 10., 0., -10., 3., 0., -3.];
 
-/// Construct the edge tangent flow using the [Sobel operator](https://en.wikipedia.org/wiki/Sobel_operator)
+    let sobel_x = ArrayView2::from_shape((3, 3), &SOBEL_X).unwrap();
+    let sobel_y = sobel_x.t();
+    let g_x = convolve(image.view(), sobel_x.view());
+    let g_y = convolve(image.view(), sobel_y);
+
+    Zip::from(&g_x)
+        .and(&g_y)
+        .par_map_collect(|g_x, g_y| vector(*g_x, *g_y))
+}
+
+/// Construct the edge tangent flow.
+///
+/// Array of the vectors tangent to the gradient at each pixel.
 ///
 /// Edge handling is a kernel crop without compensation.
 ///
@@ -28,43 +44,26 @@ pub fn edge_tangent_flow(image: ArrayView2<f64>) -> Array2<Vector<f64>> {
     let radius = 3;
     let iterations = 3;
 
-    let [width, height] = if let [width, height] = *image.shape() {
-        [width, height]
-    } else {
-        unreachable!()
-    };
-
-    let sobel_x = Array2::from(SOBEL_X.to_vec());
-    let sobel_y = sobel_x.t();
-
     // Magnitude and initial ETF based on Sobel operator
     let (mut ĝ, mut t) = {
-        let t0: Array2<Vector<f64>> = Array::from_iter(
-            conv_3x3(image.view(), sobel_x.view())
-                .zip(conv_3x3(image.view(), sobel_y))
-                .map(|(x, y)| {
-                    // CCW vector is tangent to the gradient
-                    vector(-y, x)
-                }),
-        )
-        .into_shape((width, height))
-        .unwrap();
+        let mut t0 = sobel_operator(image);
+        // CCW vector is tangent to the gradient
+        t0.mapv_inplace(|v| vector(-v.y, v.x));
         (t0.mapv(Vector::length), t0)
     };
     // Normalization
     {
-        // TODO: use copied() once stabilized in Rust
-        let ĝ_max = ĝ.max().map(|x| *x).unwrap();
+        let ĝ_max = *ĝ.max().unwrap();
         ĝ.par_mapv_inplace(|ĝ_x| ĝ_x / ĝ_max);
         t.par_mapv_inplace(Vector::normalize);
     }
 
     for _ in 0..iterations {
-        let mut t_prime = Array2::from_elem((width, height), Vector::zero());
+        let mut t_prime = Array2::from_elem(image.raw_dim(), Vector::zero());
         for i in -radius..=radius {
             for j in -radius..=radius {
-                let center_slice = get_slice_info_for_offset(i, j);
-                let kernel_slice = get_slice_info_for_offset(-i, -j);
+                let center_slice = get_slice_info_for_offset(-i, -j);
+                let kernel_slice = get_slice_info_for_offset(i, j);
                 // w_s determines whether this computation is useful
                 let w_s = i.pow(2) + j.pow(2) < radius.pow(2);
                 if w_s {
@@ -107,11 +106,7 @@ pub fn flow_based_difference_of_gaussians(
     let tau = 0.5;
     let iterations = 3;
 
-    let [width, height] = if let [width, height] = *image.shape() {
-        [width, height]
-    } else {
-        unreachable!()
-    };
+    let (width, height) = image.dim();
 
     let positions = Array::from_iter(
         (0..width)
@@ -264,6 +259,157 @@ pub fn flow_based_difference_of_gaussians(
     ĥ
 }
 
+pub struct EdgeFlowEstimate {
+    /// measure of local contrast
+    pub eigenvalues: Array2<[f64; 2]>,
+    /// direction of maximum and minimum local contrast
+    pub eigenvectors: Array2<[Vector<f64>; 2]>,
+    /// ranges from 0 (isotropic) to 1 (strongly oriented)
+    pub local_anisotropy: Array2<f64>,
+}
+
+/// Edge flow estimation using local contrast eigenvectors
+///
+/// This expects an input image to be smoothed with a Gaussian filter.
+/// Otherwise the eigenvectors will have a high degree of discontinuity.
+///
+/// <https://zero.sci-hub.st/1315/448d22408920f4a25dbe42317a9dde02/wang2012.pdf#bm_2212_st4>
+pub fn edge_flow_estimation(image: ArrayView2<f64>) -> EdgeFlowEstimate {
+    let gradient_vectors: Array2<Vector<f64>> = sobel_operator(image);
+    let eigenvalues = gradient_vectors.mapv(|v| {
+        let e = v.x.powi(2);
+        let f = v.x * v.y;
+        let g = v.y.powi(2);
+        let e_g_sum = e + g;
+        let sqrt_sum = ((e - g).powi(2) + 4. * f.powi(2)).sqrt();
+        [(e_g_sum + sqrt_sum) / 2., (e_g_sum - sqrt_sum) / 2.]
+    });
+    let eigenvectors = Zip::from(&gradient_vectors)
+        .and(&eigenvalues)
+        .map_collect(|v, e| {
+            [
+                vector(v.x * v.y, e[0] - v.x.powi(2)),
+                vector(e[1] - v.y.powi(2), v.x * v.y),
+            ]
+        });
+    let local_anisotropy = eigenvalues.mapv(|e| (e[0] - e[1]) / (e[0] + e[1]));
+    EdgeFlowEstimate {
+        eigenvalues,
+        eigenvectors,
+        local_anisotropy,
+    }
+}
+
+/// Step edge detection using the edge flow estimate for conditioning.
+///
+/// <https://zero.sci-hub.st/1315/448d22408920f4a25dbe42317a9dde02/wang2012.pdf#bm_2212_st3>
+pub fn step_edge_detection(
+    image: ArrayView2<f64>,
+    edge_flow_estimate: ArrayView2<[Vector<f64>; 2]>,
+) -> Array2<f64> {
+    let sigma_c = 1.;
+    let sigma_s = 1.6 * sigma_c;
+    let rho = 1.;
+    let phi_e_sharpness = 0.25;
+    let threshold = 0.3;
+
+    let (width, height) = image.dim();
+
+    let t_range = (NUM_STANDARD_DEVIATIONS * sigma_s).ceil() as usize;
+
+    let positions = Array::from_iter(
+        (0..width)
+            .map(|x| (0..height).map(move |y| [x, y]))
+            .flatten(),
+    )
+    .into_shape(image.raw_dim())
+    .unwrap();
+
+    let mut d = Array2::<f64>::zeros(image.raw_dim());
+    Zip::from(&mut d)
+        .and(&positions)
+        .par_for_each(|d_x, position| {
+            let mut first_derivative_component = 0.;
+            let mut first_derivative_weight_sum = 0.;
+            let mut laplacian_of_gaussian_component = 0.;
+            let mut laplacian_of_gaussian_weight_sum = 0.;
+
+            let gradient_perpendicular_vector = edge_flow_estimate[*position][0].normalize();
+            let iterate_by_y =
+                gradient_perpendicular_vector.y.abs() > gradient_perpendicular_vector.x.abs();
+            let line_equation = Line {
+                point: point(position[0] as f64, position[1] as f64),
+                vector: gradient_perpendicular_vector,
+            }
+            .equation();
+            for direction in [-1.0, 1.0] {
+                let mut sum_position = *position;
+
+                for t in 0..=t_range {
+                    if !(t == 0 && direction > 0.0) {
+                        let dist = (vector(position[0] as f64, position[1] as f64)
+                            - vector(sum_position[0] as f64, sum_position[1] as f64))
+                        .length();
+                        let first_derivative_weight = gaussian_pdf_first_derivative(dist, sigma_c);
+                        first_derivative_weight_sum += first_derivative_weight;
+                        first_derivative_component += first_derivative_weight * image[sum_position];
+
+                        let laplacian_of_gaussian_weight =
+                            gaussian_pdf(dist, sigma_c) - rho * gaussian_pdf(dist, sigma_s);
+                        laplacian_of_gaussian_weight_sum += laplacian_of_gaussian_weight;
+                        laplacian_of_gaussian_component +=
+                            laplacian_of_gaussian_weight * image[sum_position];
+                    }
+
+                    let mut reached_edge_of_image = false;
+
+                    // Bresenham's line algorithm
+                    let solved = if iterate_by_y {
+                        let y = position[1] as f64 + (t + 1) as f64 * direction;
+                        [line_equation.solve_x_for_y(y).unwrap(), y]
+                    } else {
+                        let x = position[0] as f64 + (t + 1) as f64 * direction;
+                        [x, line_equation.solve_y_for_x(x).unwrap()]
+                    };
+
+                    for ((dim_position, dim_solved), dim_limit) in sum_position
+                        .iter_mut()
+                        .zip(solved.iter())
+                        .zip([width, height])
+                    {
+                        let dim_solved = dim_solved.round();
+                        if dim_solved < 0. || dim_solved >= (dim_limit - 1) as f64 {
+                            reached_edge_of_image = true;
+                            break;
+                        } else {
+                            *dim_position = dim_solved as usize;
+                        }
+                    }
+                    if reached_edge_of_image {
+                        break;
+                    }
+                }
+            }
+            *d_x = first_derivative_component.abs() - laplacian_of_gaussian_component.abs();
+        });
+
+    let h = {
+        // let min = *d.min().unwrap();
+        // let max = *d.max().unwrap();
+        d.mapv_inplace(|d_x| {
+            // (d_x - min) / (max - min)
+            if d_x < threshold {
+                1.
+            } else {
+                1. - (phi_e_sharpness * d_x).tanh()
+            }
+        });
+        d
+    };
+
+    h
+}
+
 /// <https://en.wikipedia.org/wiki/Normal_distribution>
 #[inline]
 fn gaussian_pdf(x: f64, sigma: f64) -> f64 {
@@ -271,42 +417,52 @@ fn gaussian_pdf(x: f64, sigma: f64) -> f64 {
         / (std::f64::consts::PI.sqrt() * std::f64::consts::SQRT_2 * sigma)
 }
 
-/// Use a 3x3 [kernel](https://en.wikipedia.org/wiki/Kernel_(image_processing)) to do convolution on an image.
+#[inline]
+fn gaussian_pdf_first_derivative(x: f64, sigma: f64) -> f64 {
+    (-0.5 * (x / sigma).powi(2)).exp() * -x
+        / (std::f64::consts::PI.sqrt() * std::f64::consts::SQRT_2 * sigma.powi(3))
+}
+
+#[inline]
+fn gaussian_cdf(x: f64, sigma: f64) -> f64 {
+    0.5 * (1. + erf(x / (sigma * std::f64::consts::SQRT_2)))
+}
+
+fn erf(x: f64) -> f64 {
+    let sign = x.signum();
+    let x = x.abs();
+    let p = 0.47047;
+    let a1 = 0.3480242;
+    let a2 = -0.0958798;
+    let a3 = 0.7478556;
+    let t = 1. / (1. + p * x);
+    let tau = (a1 * t + a2 * t.powi(2) + a3 * t.powi(3)) * (-x.powi(2)).exp();
+    if sign >= 0. {
+        1. - tau
+    } else {
+        tau - 1.
+    }
+}
+
+/// Use an NxN [kernel](https://en.wikipedia.org/wiki/Kernel_(image_processing)) to do convolution on an image.
 ///
 /// Edge handling is a kernel crop without compensation.
-fn conv_3x3<'a>(
-    image: ArrayView2<'a, f64>,
-    kernel: ArrayView2<'a, f64>,
-) -> impl Iterator<Item = f64> + 'a {
-    (0..image.shape()[0])
-        .map(move |i| {
-            (0..image.shape()[1]).map(move |j| {
-                let kernel_transpose = kernel.t();
-                let mut kernel_it = kernel_transpose.iter();
-                let mut acc = 0.;
-                let x_range = i.saturating_sub(1)..=(i + 1).min(image.shape()[0] - 1);
-                if i == 0 {
-                    kernel_it.next();
-                }
-                for x in x_range {
-                    let y_range = j.saturating_sub(1)..=(j + 1).min(image.shape()[1] - 1);
-                    if j == 0 {
-                        kernel_it.next();
-                    }
-                    for y in y_range {
-                        acc += kernel_it.next().unwrap() * image[[x, y]];
-                    }
-                    if j == image.shape()[0] - 1 {
-                        kernel_it.next();
-                    }
-                }
-                if i == image.shape()[0] - 1 {
-                    kernel_it.next();
-                }
-                acc
-            })
-        })
-        .flatten()
+fn convolve<'a>(image: ArrayView2<'a, f64>, kernel: ArrayView2<'a, f64>) -> Array2<f64> {
+    let kernel_transpose = kernel.t();
+    let (kernel_width, kernel_height) = kernel.raw_dim().into_pattern();
+    let mut it = kernel_transpose.iter();
+    let mut convolved = Array::zeros(image.raw_dim());
+    for i in -(kernel_width as i32) / 2..=kernel_width as i32 / 2 {
+        for j in -(kernel_height as i32) / 2..=kernel_height as i32 / 2 {
+            let center_slice = get_slice_info_for_offset(-i, -j);
+            let kernel_slice = get_slice_info_for_offset(i, j);
+            let coefficient = it.next().unwrap();
+            Zip::from(convolved.slice_mut(center_slice))
+                .and(image.slice(kernel_slice))
+                .par_for_each(|dest, kernel| *dest += coefficient * *kernel);
+        }
+    }
+    convolved
 }
 
 #[cfg(test)]
@@ -316,9 +472,7 @@ mod tests {
     fn test_convolution_operator() {
         let image = Array2::ones((3, 3));
         let kernel = array![[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]];
-        let result = Array::from_iter(conv_3x3(image.view(), kernel.view()))
-            .into_shape((image.shape()[0], image.shape()[1]))
-            .unwrap();
+        let result = convolve(image.view(), kernel.view());
         assert_eq!(result[[1, 1]], (1..=9).sum::<usize>() as f64);
     }
 }

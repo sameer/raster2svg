@@ -47,10 +47,8 @@ pub fn srgb_to_hsl(srgb: ArrayView3<f64>) -> Array3<f64> {
 /// sRGB under D65 illuminant to CIEXYZ under D50 illuminant
 ///
 /// <https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation_(sRGB_to_CIE_XYZ)>
-///
-/// <http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html>
 pub fn srgb_to_ciexyz(srgb: ArrayView3<f64>) -> Array3<f64> {
-    let mut ciexyz = Array3::zeros((3, srgb.shape()[1], srgb.shape()[2]));
+    let mut ciexyz = Array3::zeros(srgb.raw_dim());
 
     const SRGB_TO_CIEXYZ: [[f64; 3]; 3] = [
         [0.4124, 0.3576, 0.1805],
@@ -108,7 +106,7 @@ pub fn ciexyz_to_cielab(ciexyz: ArrayView3<f64>) -> Array3<f64> {
     const X_N: f64 = 0.96429568;
     const Y_N: f64 = 1.;
     const Z_N: f64 = 0.8251046;
-    let mut cielab = Array3::zeros((3, ciexyz.shape()[1], ciexyz.shape()[2]));
+    let mut cielab = Array3::zeros(ciexyz.raw_dim());
     cielab
         .slice_mut(s![0, .., ..])
         .assign(&ciexyz.map_axis(Axis(0), |xyz| {

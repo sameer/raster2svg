@@ -1,4 +1,12 @@
-use crate::{Style, flow_filter::{edge_tangent_flow, flow_based_difference_of_gaussians}, graph::{mst, tsp}, voronoi::{calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi}};
+use crate::{
+    filter::{
+        edge_flow_estimation, edge_tangent_flow, flow_based_difference_of_gaussians,
+        step_edge_detection,
+    },
+    graph::{mst, tsp},
+    voronoi::{calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi},
+    Style,
+};
 use cairo::{Context, Matrix};
 use log::{debug, warn};
 use lyon_geom::point;
@@ -17,7 +25,10 @@ pub fn render_fdog_based(
     // Need to invert image for the sake of fdog
     image.par_mapv_inplace(|x| 1.0 - x);
     let etf = edge_tangent_flow(image.view());
-    let fdog = flow_based_difference_of_gaussians(image.view(), etf.view());
+    let fdog = flow_based_difference_of_gaussians(
+        image.view(),
+        etf.view(),
+    );
     for (pos, value) in fdog.indexed_iter() {
         if *value < 1.0 {
             ctx.set_source_rgb(*value, *value, *value);
@@ -39,11 +50,7 @@ pub fn render_stipple_based(
     ctx: &Context,
     matrix: Matrix,
 ) {
-    let [width, height] = if let [width, height] = *image.shape() {
-        [width, height]
-    } else {
-        unreachable!()
-    };
+    let (width, height) = image.dim();
 
     let stipple_area = (instrument_diameter_in_pixels / 2.).powi(2) * std::f64::consts::PI;
 

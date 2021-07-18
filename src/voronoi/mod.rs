@@ -116,12 +116,12 @@ pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitiv
     while round_step != 0 {
         for y_dir in -1..=1 {
             for x_dir in -1..=1 {
-                let center_slice_info =
-                    get_slice_info_for_offset(x_dir * round_step as i32, y_dir * round_step as i32);
-                let kernel_slice_info = get_slice_info_for_offset(
+                let center_slice_info = get_slice_info_for_offset(
                     -x_dir * round_step as i32,
                     -y_dir * round_step as i32,
                 );
+                let kernel_slice_info =
+                    get_slice_info_for_offset(x_dir * round_step as i32, y_dir * round_step as i32);
                 par_azip! {
                     (dest in scratchpad.slice_mut(center_slice_info), sample in grid.slice(kernel_slice_info), here in positions.slice(center_slice_info)) {
                         let here = [T::from_usize(here[0]).unwrap(), T::from_usize(here[1]).unwrap()];
@@ -147,7 +147,7 @@ pub fn colors_to_assignments<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
     if sites.is_empty() {
         return vec![];
     }
-    let expected_assignment_capacity = grid.shape()[0] * grid.shape()[1] / sites.len();
+    let expected_assignment_capacity = grid.len() / sites.len();
     let mut sites_to_points =
         vec![Vec::<[T; 2]>::with_capacity(expected_assignment_capacity); sites.len()];
     grid.indexed_iter().for_each(|((i, j), site)| {
