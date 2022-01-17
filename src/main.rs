@@ -184,7 +184,7 @@ fn main() -> io::Result<()> {
         let image = Array::from_iter(
             image
                 .pixels()
-                .map(|p| p.0.clone())
+                .map(|p| p.0)
                 .flatten()
                 .map(|p| p as f64 / u16::MAX as f64),
         )

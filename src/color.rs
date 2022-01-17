@@ -44,11 +44,36 @@ pub fn srgb_to_hsl(srgb: ArrayView3<f64>) -> Array3<f64> {
     hsl
 }
 
+/// CAT02 D65 -> D50 Illuminant transform
+///
+/// Derived using [colour-science](https://colour.readthedocs.io/en/develop/index.html):
+/// ```python
+/// from colour import CCS_ILLUMINANTS
+/// from colour.adaptation import matrix_chromatic_adaptation_VonKries
+/// from colour.models import xy_to_xyY, xyY_to_XYZ
+///
+/// illuminant_RGB = CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"]
+/// illuminant_XYZ = CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D50"]
+/// chromatic_adaptation_transform = "CAT02"
+/// print(
+///     matrix_chromatic_adaptation_VonKries(
+///         xyY_to_XYZ(xy_to_xyY(illuminant_RGB)),
+///         xyY_to_XYZ(xy_to_xyY(illuminant_XYZ)),
+///         transform=chromatic_adaptation_transform,
+///     )
+/// )
+/// ```
+const CHROMATIC_ADAPTATION_TRANSFORM: [[f64; 3]; 3] = [
+    [1.04257389, 0.03089108, -0.05281257],
+    [0.02219345, 1.00185663, -0.02107375],
+    [-0.00116488, -0.00342053, 0.76178908],
+];
+
 /// sRGB under D65 illuminant to CIEXYZ under D50 illuminant
 ///
 /// <https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation_(sRGB_to_CIE_XYZ)>
 pub fn srgb_to_ciexyz(srgb: ArrayView3<f64>) -> Array3<f64> {
-    let mut ciexyz = Array3::zeros(srgb.raw_dim());
+    let mut ciexyz = Array3::<f64>::zeros(srgb.raw_dim());
 
     const SRGB_TO_CIEXYZ: [[f64; 3]; 3] = [
         [0.4124, 0.3576, 0.1805],
@@ -56,43 +81,25 @@ pub fn srgb_to_ciexyz(srgb: ArrayView3<f64>) -> Array3<f64> {
         [0.0193, 0.1192, 0.9505],
     ];
 
-    // CAT02 D50 Illuminant transform
-    const CHROMATIC_ADAPTATION_TRANSFORM: [[f64; 3]; 3] = [
-        [1.04257389, 0.03089108, -0.05281257],
-        [0.02219345, 1.00185663, -0.02107375],
-        [-0.00116488, -0.00342053, 0.76178908],
-    ];
-
     for i in 0..ciexyz.raw_dim()[1] {
         for j in 0..ciexyz.raw_dim()[2] {
-            let gamma_expanded = srgb
-                .slice(s![.., i, j])
-                .iter()
-                .copied()
-                .map(gamma_expand_rgb)
-                .collect::<Vec<_>>();
-            let ciexyz_under_d65 = SRGB_TO_CIEXYZ
-                .iter()
-                .map(|coefficients| {
-                    gamma_expanded
-                        .iter()
-                        .zip(coefficients)
-                        .map(|(component, coefficient)| component * coefficient)
-                        .sum::<f64>()
-                        .clamp(0., 1.)
-                })
-                .collect::<Vec<_>>();
-            CHROMATIC_ADAPTATION_TRANSFORM
-                .iter()
-                .enumerate()
-                .for_each(|(k, coefficients)| {
-                    ciexyz[[k, i, j]] = ciexyz_under_d65
-                        .iter()
-                        .zip(coefficients)
-                        .map(|(component, coefficient)| component * coefficient)
-                        .sum::<f64>()
-                        .clamp(0., 1.)
-                });
+            let mut ciexyz_under_d65 = [0.; 3];
+            for k in 0..3 {
+                let gamma_expanded = gamma_expand_rgb(srgb[[k, i, j]]);
+                for l in 0..3 {
+                    ciexyz_under_d65[l] += SRGB_TO_CIEXYZ[l][k] * gamma_expanded;
+                }
+            }
+            for l in 0..3 {
+                ciexyz_under_d65[l] = ciexyz_under_d65[l].clamp(0., 1.);
+            }
+
+            for k in 0..3 {
+                for l in 0..3 {
+                    ciexyz[[k, i, j]] += CHROMATIC_ADAPTATION_TRANSFORM[k][l] * ciexyz_under_d65[l];
+                }
+                ciexyz[[k, i, j]] = ciexyz[[k, i, j]].clamp(0., 1.);
+            }
         }
     }
 
@@ -103,10 +110,11 @@ pub fn srgb_to_ciexyz(srgb: ArrayView3<f64>) -> Array3<f64> {
 ///
 /// <https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB>
 pub fn ciexyz_to_cielab(ciexyz: ArrayView3<f64>) -> Array3<f64> {
+    // Can't find my source for these, but one derivation is on https://www.mathworks.com/help/images/ref/whitepoint.html
     const X_N: f64 = 0.96429568;
     const Y_N: f64 = 1.;
     const Z_N: f64 = 0.8251046;
-    let mut cielab = Array3::zeros(ciexyz.raw_dim());
+    let mut cielab = Array3::<f64>::zeros(ciexyz.raw_dim());
     cielab
         .slice_mut(s![0, .., ..])
         .assign(&ciexyz.map_axis(Axis(0), |xyz| {
@@ -120,7 +128,7 @@ pub fn ciexyz_to_cielab(ciexyz: ArrayView3<f64>) -> Array3<f64> {
         .assign(&ciexyz.map_axis(Axis(0), |xyz| {
             let x = xyz[0];
             let y = xyz[1];
-            500. * (cielab_f(x / X_N) - cielab_f(y))
+            500. * (cielab_f(x / X_N) - cielab_f(y / Y_N))
         }));
 
     cielab
@@ -134,21 +142,29 @@ pub fn ciexyz_to_cielab(ciexyz: ArrayView3<f64>) -> Array3<f64> {
     cielab
 }
 
+/// Function defined in CIEXYZ to CIELAB conversion
+///
+/// https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB
 fn cielab_f(t: f64) -> f64 {
-    const DELTA: f64 = 6. / 29.;
+    const DELTA_POW3: f64 = 216. / 24389.;
+    const THREE_DELTA_POW2: f64 = 108. / 841.;
+    const FOUR_OVER_TWENTY_NINE: f64 = 4. / 29.;
 
-    if t > DELTA.powi(3) {
+    if t > DELTA_POW3 {
         t.cbrt()
     } else {
-        t / (3. * DELTA.powi(2)) + 4. / 29.
+        t / THREE_DELTA_POW2 + FOUR_OVER_TWENTY_NINE
     }
 }
 
+/// Gamma-expand (or linearize) an sRGB value
+///
+/// https://en.wikipedia.org/wiki/SRGB#From_sRGB_to_CIE_XYZ
 fn gamma_expand_rgb(component: f64) -> f64 {
-    if component <= 0.4045 {
+    if component <= 0.04045 {
         component / 12.92
     } else {
-        ((component + 0.55) / 1.55).powf(2.4)
+        ((component + 0.055) / 1.055).powf(2.4)
     }
 }
 
