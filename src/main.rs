@@ -199,7 +199,7 @@ fn main() -> io::Result<()> {
             image_in_cielab.raw_dim()[2],
         ));
 
-        // Key
+        // Key (Black) derived as the inverse of lightness
         {
             pen_image
                 .slice_mut(s![3, .., ..])
@@ -209,6 +209,8 @@ fn main() -> io::Result<()> {
                 .par_mapv_inplace(|v| 1.0 - v);
         }
         // RGB
+        // Project hue onto each pen's color to derive a value [0, 1] for
+        // how helpful a pen will be in reproducing a pixel
         match opt.color_model {
             ColorModel::Cielab => [
                 vector(80.81351675261305, 69.88458436386973),
@@ -284,7 +286,7 @@ fn main() -> io::Result<()> {
 
     ctx.set_source_rgb(1., 1., 1.);
     ctx.rectangle(0., 0., width, height);
-    ctx.fill();
+    ctx.fill().unwrap();
 
     ctx.set_line_cap(LineCap::Round);
     ctx.set_line_join(LineJoin::Round);

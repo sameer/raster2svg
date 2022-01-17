@@ -33,7 +33,7 @@ pub fn render_fdog_based(
             ctx.move_to(pos.0 as f64, pos.1 as f64);
             ctx.rectangle(pos.0 as f64, pos.1 as f64, 1.0, 1.0);
             ctx.set_matrix(Matrix::identity());
-            ctx.fill();
+            ctx.fill().unwrap();
         }
     }
 }
@@ -174,7 +174,7 @@ pub fn render_stipple_based(
                     std::f64::consts::TAU,
                 );
                 ctx.set_matrix(Matrix::identity());
-                ctx.fill();
+                ctx.fill().unwrap();
             }
         }
         Style::Voronoi => {
@@ -194,7 +194,7 @@ pub fn render_stipple_based(
                         ctx.line_to(point[0] as f64, point[1] as f64);
                     }
                     ctx.set_matrix(Matrix::identity());
-                    ctx.stroke();
+                    ctx.stroke().unwrap();
                 }
             }
         }
@@ -214,7 +214,7 @@ pub fn render_stipple_based(
                     ctx.move_to(from[0] as f64, from[1] as f64);
                     ctx.line_to(to[0] as f64, to[1] as f64);
                     ctx.set_matrix(Matrix::identity());
-                    ctx.stroke();
+                    ctx.stroke().unwrap();
                 }
             } else {
                 let tree = mst::compute_mst(&voronoi_sites, &delaunay);
@@ -228,7 +228,7 @@ pub fn render_stipple_based(
                         ctx.move_to(edge[0][0] as f64, edge[0][1] as f64);
                         ctx.line_to(edge[1][0] as f64, edge[1][1] as f64);
                         ctx.set_matrix(Matrix::identity());
-                        ctx.stroke();
+                        ctx.stroke().unwrap();
                     }
                 } else {
                     let tsp = tsp::approximate_tsp_with_mst(&voronoi_sites, &tree);
@@ -241,7 +241,7 @@ pub fn render_stipple_based(
                         ctx.line_to(next[0] as f64, next[1] as f64);
                     }
                     ctx.set_matrix(Matrix::identity());
-                    ctx.stroke();
+                    ctx.stroke().unwrap();
                 }
             }
         }
