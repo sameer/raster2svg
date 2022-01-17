@@ -25,10 +25,7 @@ pub fn render_fdog_based(
     // Need to invert image for the sake of fdog
     image.par_mapv_inplace(|x| 1.0 - x);
     let etf = edge_tangent_flow(image.view());
-    let fdog = flow_based_difference_of_gaussians(
-        image.view(),
-        etf.view(),
-    );
+    let fdog = flow_based_difference_of_gaussians(image.view(), etf.view());
     for (pos, value) in fdog.indexed_iter() {
         if *value < 1.0 {
             ctx.set_source_rgb(*value, *value, *value);

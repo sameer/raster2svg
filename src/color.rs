@@ -63,8 +63,8 @@ pub fn srgb_to_ciexyz(srgb: ArrayView3<f64>) -> Array3<f64> {
         [-0.00116488, -0.00342053, 0.76178908],
     ];
 
-    for i in 0..ciexyz.shape()[1] {
-        for j in 0..ciexyz.shape()[2] {
+    for i in 0..ciexyz.raw_dim()[1] {
+        for j in 0..ciexyz.raw_dim()[2] {
             let gamma_expanded = srgb
                 .slice(s![.., i, j])
                 .iter()

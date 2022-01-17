@@ -23,12 +23,12 @@ use crate::render::{render_fdog_based, render_stipple_based};
 mod color;
 /// Image filter algorithms (i.e. Sobel operator, FDoG, ETF)
 mod filter;
+/// Graph algorithms
+mod graph;
 /// Line segment drawing and related algorithms
 mod lsd;
 /// Routines for creating the final SVG using [Cairo](cairographics.org)
 mod render;
-/// Graph algorithms
-mod graph;
 /// Construct the [Voronoi diagram](https://en.wikipedia.org/wiki/Voronoi_diagram) and calculate related properties
 mod voronoi;
 
@@ -50,7 +50,7 @@ struct Opt {
     #[structopt(
         long,
         default_value = "cielab",
-        possible_values = ColorModel::raw_variants(),
+        possible_values = &ColorModel::raw_variants(),
         case_insensitive = true
     )]
     color_model: ColorModel,
@@ -59,7 +59,7 @@ struct Opt {
     #[structopt(
         long,
         default_value = "mst",
-        possible_values = Style::raw_variants(),
+        possible_values = &Style::raw_variants(),
         case_insensitive = true
     )]
     style: Style,
@@ -68,7 +68,7 @@ struct Opt {
     #[structopt(
         long,
         default_value = "pen",
-        possible_values = Implement::raw_variants(),
+        possible_values = &Implement::raw_variants(),
         case_insensitive = true
     )]
     implement: Implement,
@@ -97,9 +97,20 @@ macro_rules! opt {
 
         paste::paste! {
             impl $name {
-                const fn raw_variants() -> &'static [&'static str] {
-                    &[$(
+                const NUM_VARIANTS: usize = 0 $(
+                    + if let _ = $name::$variant { 1 } else { 0 }
+                )*;
+
+                const fn raw_variants() -> [&'static str; Self::NUM_VARIANTS] {
+                    [$(
                         stringify!([<$variant:snake>]),
+                    )*]
+                }
+
+                const fn variants() -> [$name; Self::NUM_VARIANTS] {
+                    use $name::*;
+                    [$(
+                        [<$variant>],
                     )*]
                 }
             }
@@ -261,8 +272,8 @@ fn main() -> io::Result<()> {
     let instrument_diameter = opt.diameter.get::<millimeter>();
     let instrument_diameter_in_pixels = instrument_diameter * dots_per_mm;
 
-    let width = (pen_image.shape()[1] as f64 / dots_per_mm / opt.super_sample as f64).round();
-    let height = (pen_image.shape()[2] as f64 / dots_per_mm / opt.super_sample as f64).round();
+    let width = (pen_image.raw_dim()[1] as f64 / dots_per_mm / opt.super_sample as f64).round();
+    let height = (pen_image.raw_dim()[2] as f64 / dots_per_mm / opt.super_sample as f64).round();
 
     let mut surf = match &opt.out {
         Some(_) => cairo::SvgSurface::new(width, height, opt.out).unwrap(),
