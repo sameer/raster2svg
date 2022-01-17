@@ -95,7 +95,7 @@ pub fn approximate_tsp_with_mst<
 
         // Now there are (in theory) two disconnected trees
         // Find the two connected trees in the graph
-        let mut disconnected_tree_visited = bitvec![0; vertices.len()];
+        let mut disconnected_tree_visited = BitVec::<u8, Msb0>::repeat(false, vertices.len());
         let mut disconnected_tree_visit_count = 1;
         {
             *disconnected_tree_visited

@@ -98,7 +98,7 @@ macro_rules! opt {
         paste::paste! {
             impl $name {
                 const NUM_VARIANTS: usize = 0 $(
-                    + if let _ = $name::$variant { 1 } else { 0 }
+                    + { let _ = $name::$variant; 1 }
                 )*;
 
                 const fn raw_variants() -> [&'static str; Self::NUM_VARIANTS] {
@@ -184,7 +184,7 @@ fn main() -> io::Result<()> {
         let image = Array::from_iter(
             image
                 .pixels()
-                .map(|p| p.0.iter().copied())
+                .map(|p| p.0.clone())
                 .flatten()
                 .map(|p| p as f64 / u16::MAX as f64),
         )
