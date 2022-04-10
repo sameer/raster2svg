@@ -75,7 +75,7 @@ pub fn render_stipple_based(
             let cell_properties = calculate_cell_properties(image.view(), points);
             let moments = cell_properties.moments;
 
-            if moments.density == 0.0 {
+            if !(moments.density > f64::EPSILON) {
                 changed = true;
                 continue;
             }
