@@ -65,7 +65,18 @@ pub fn approximate_tsp_with_mst<
 }
 
 fn approximate_tsp_with_mst_greedy<
-    T: PrimInt + Signed + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
+    T: PrimInt
+        + Signed
+        + FromPrimitive
+        + Eq
+        + PartialEq
+        + PartialOrd
+        + Ord
+        + Hash
+        + Debug
+        + Sum
+        + Send
+        + Sync,
 >(
     vertices: &[[T; 2]],
     tree: &[[[T; 2]; 2]],
@@ -116,7 +127,6 @@ fn approximate_tsp_with_mst_greedy<
         // Now there are (in theory) two disconnected trees
         // Find the two connected trees in the graph
         let mut disconnected_tree_visited = BitVec::<u8, Msb0>::repeat(false, vertices.len());
-        let mut disconnected_tree_visit_count = 1;
         {
             *disconnected_tree_visited
                 .get_mut(vertex_to_index[&disconnected_node])
@@ -127,7 +137,6 @@ fn approximate_tsp_with_mst_greedy<
                     let adjacency_idx = vertex_to_index[adjacency];
                     if !disconnected_tree_visited[adjacency_idx] {
                         *disconnected_tree_visited.get_mut(adjacency_idx).unwrap() = true;
-                        disconnected_tree_visit_count += 1;
                         dfs.push(adjacency);
                     }
                 }
@@ -137,72 +146,30 @@ fn approximate_tsp_with_mst_greedy<
         // Find leaves in the two
         // Pick the shortest possible link between two leaves that would reconnect the trees
 
-        let (branch_tree_leaf, disconnected_tree_leaf) =
-            if disconnected_tree_visit_count > vertices.len() - disconnected_tree_visit_count {
-                let branch_tree_leaves = disconnected_tree_visited
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, in_disconnected_tree)| {
-                        !**in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
-                    })
-                    .map(|(branch_idx, _)| vertices[branch_idx])
-                    .collect::<Vec<_>>();
+        let (disconnected_tree_leaves, branch_tree_leaves) = (0..vertices.len())
+            .filter(|i| adjacency_map[&vertices[*i]].len() <= 1)
+            .partition::<Vec<_>, _>(|i| disconnected_tree_visited[*i]);
 
-                disconnected_tree_visited
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, in_disconnected_tree)| {
-                        **in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
-                    })
-                    .map(|(disconnected_idx, _)| vertices[disconnected_idx])
-                    .flat_map(|disconnected_tree_leaf| {
-                        branch_tree_leaves.iter().map(move |branch_tree_leaf| {
-                            (*branch_tree_leaf, disconnected_tree_leaf)
-                        })
-                    })
-                    .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
-                        abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
-                    })
-                    .unwrap()
-            } else {
-                let disconnected_tree_leaves = disconnected_tree_visited
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, in_disconnected_tree)| {
-                        **in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
-                    })
-                    .map(|(disconnected_idx, _)| vertices[disconnected_idx])
-                    .collect::<Vec<_>>();
-
-                disconnected_tree_visited
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, in_disconnected_tree)| {
-                        !**in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
-                    })
-                    .map(|(branch_idx, _)| vertices[branch_idx])
-                    .flat_map(|branch_tree_leaf| {
-                        disconnected_tree_leaves
-                            .iter()
-                            .map(move |disconnected_tree_leaf| {
-                                (branch_tree_leaf, *disconnected_tree_leaf)
-                            })
-                    })
-                    .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
-                        abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
-                    })
-                    .unwrap()
-            };
+        let (disconnected_tree_leaf, branch_tree_leaf) = disconnected_tree_leaves
+            .into_par_iter()
+            .flat_map(|i| {
+                branch_tree_leaves
+                    .clone()
+                    .into_par_iter()
+                    .map(move |j| (i, j))
+            })
+            .min_by_key(|(i, j)| abs_distance_squared(vertices[*i], vertices[*j]))
+            .unwrap();
 
         // Connect leaves
         adjacency_map
-            .get_mut(&branch_tree_leaf)
+            .get_mut(&vertices[branch_tree_leaf])
             .unwrap()
-            .insert(disconnected_tree_leaf);
+            .insert(vertices[disconnected_tree_leaf]);
         adjacency_map
-            .get_mut(&disconnected_tree_leaf)
+            .get_mut(&vertices[disconnected_tree_leaf])
             .unwrap()
-            .insert(branch_tree_leaf);
+            .insert(vertices[branch_tree_leaf]);
     }
 
     // Extract path from the adjacency list
@@ -405,6 +372,9 @@ fn local_improvement_with_tabu_search<
                         tabu.push_back(j);
                         tabu_set.insert(j);
                     }
+                } else {
+                    *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                    continue;
                 }
             }
             // O(v^2)
@@ -475,6 +445,9 @@ fn local_improvement_with_tabu_search<
                     tabu.extend(tabu_add);
                     tabu_set.extend(tabu_add);
                     current[this.1..=other.0].reverse();
+                } else {
+                    *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                    continue;
                 }
             }
             // O(v) 3*(v-1)
@@ -526,6 +499,9 @@ fn local_improvement_with_tabu_search<
                         tabu_set.extend(tabu_add);
                         current[j..].reverse();
                     }
+                } else {
+                    *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                    continue;
                 }
             }
         }
