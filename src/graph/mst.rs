@@ -1,6 +1,9 @@
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use spade::delaunay::{DelaunayTreeLocate, IntDelaunayTriangulation};
+use spade::{
+    delaunay::{DelaunayTreeLocate, IntDelaunayTriangulation},
+    SpadeNum,
+};
 use std::{cmp::Reverse, collections::BinaryHeap, fmt::Debug, hash::Hash};
 
 #[derive(PartialEq, Eq, Hash)]
@@ -31,17 +34,15 @@ impl<T: PrimInt + Signed + PartialEq + Eq + PartialOrd + Ord + Debug> Ord for Pr
 /// <https://en.wikipedia.org/wiki/Euclidean_minimum_spanning_tree#Algorithms_for_computing_EMSTs_in_two_dimensions>
 pub fn compute_mst<T>(
     points: &[[T; 2]],
-    delaunay: &IntDelaunayTriangulation<[i64; 2], DelaunayTreeLocate<[i64; 2]>>,
+    delaunay: &IntDelaunayTriangulation<[T; 2], DelaunayTreeLocate<[T; 2]>>,
 ) -> Vec<[[T; 2]; 2]>
 where
-    T: PrimInt + Signed + FromPrimitive + Hash + Debug,
+    T: PrimInt + Signed + FromPrimitive + Hash + Debug + SpadeNum,
 {
     let mut edges_by_vertex: HashMap<[T; 2], Vec<PriorityQueueEdge<T>>> = HashMap::default();
     delaunay.edges().for_each(|edge| {
-        let from: &[i64; 2] = &edge.from();
-        let from = [T::from_i64(from[0]).unwrap(), T::from_i64(from[1]).unwrap()];
-        let to: &[i64; 2] = &edge.to();
-        let to = [T::from_i64(to[0]).unwrap(), T::from_i64(to[1]).unwrap()];
+        let from: [T; 2] = *edge.from();
+        let to: [T; 2] = *edge.to();
         edges_by_vertex
             .entry(from)
             .or_default()
