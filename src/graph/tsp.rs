@@ -84,27 +84,22 @@ fn approximate_tsp_with_mst_greedy<
     let mut branch_list = adjacency_map
         .iter()
         .filter(|(_, adjacencies)| adjacencies.len() >= 3)
-        .map(|(branch, adjacencies)| {
+        .flat_map(|(branch, adjacencies)| {
             adjacencies
                 .iter()
                 .map(move |adjacency| Edge([*branch, *adjacency]))
         })
-        .flatten()
         .collect::<Vec<_>>();
     branch_list.sort();
 
     while let Some(Edge([branch, disconnected_node])) = branch_list.pop() {
         dbg!(branch_list.len());
         // No longer a branch
-        if adjacency_map.get(&branch).unwrap().len() <= 2 {
+        if adjacency_map[&branch].len() <= 2 {
             continue;
         }
         // Disconnected node was once a branch, already processed this pair
-        if !adjacency_map
-            .get(&branch)
-            .unwrap()
-            .contains(&disconnected_node)
-        {
+        if !adjacency_map[&branch].contains(&disconnected_node) {
             continue;
         }
 
@@ -124,12 +119,12 @@ fn approximate_tsp_with_mst_greedy<
         let mut disconnected_tree_visit_count = 1;
         {
             *disconnected_tree_visited
-                .get_mut(*vertex_to_index.get(&disconnected_node).unwrap())
+                .get_mut(vertex_to_index[&disconnected_node])
                 .unwrap() = true;
             let mut dfs = vec![&disconnected_node];
             while let Some(head) = dfs.pop() {
-                for adjacency in adjacency_map.get(head).unwrap() {
-                    let adjacency_idx = *vertex_to_index.get(adjacency).unwrap();
+                for adjacency in &adjacency_map[head] {
+                    let adjacency_idx = vertex_to_index[adjacency];
                     if !disconnected_tree_visited[adjacency_idx] {
                         *disconnected_tree_visited.get_mut(adjacency_idx).unwrap() = true;
                         disconnected_tree_visit_count += 1;
@@ -142,65 +137,62 @@ fn approximate_tsp_with_mst_greedy<
         // Find leaves in the two
         // Pick the shortest possible link between two leaves that would reconnect the trees
 
-        let (branch_tree_leaf, disconnected_tree_leaf) = if disconnected_tree_visit_count
-            > vertices.len() - disconnected_tree_visit_count
-        {
-            let branch_tree_leaves = disconnected_tree_visited
-                .iter()
-                .enumerate()
-                .filter(|(i, in_disconnected_tree)| {
-                    !**in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
-                })
-                .map(|(branch_idx, _)| vertices[branch_idx])
-                .collect::<Vec<_>>();
+        let (branch_tree_leaf, disconnected_tree_leaf) =
+            if disconnected_tree_visit_count > vertices.len() - disconnected_tree_visit_count {
+                let branch_tree_leaves = disconnected_tree_visited
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, in_disconnected_tree)| {
+                        !**in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
+                    })
+                    .map(|(branch_idx, _)| vertices[branch_idx])
+                    .collect::<Vec<_>>();
 
-            disconnected_tree_visited
-                .iter()
-                .enumerate()
-                .filter(|(i, in_disconnected_tree)| {
-                    **in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
-                })
-                .map(|(disconnected_idx, _)| vertices[disconnected_idx])
-                .map(|disconnected_tree_leaf| {
-                    branch_tree_leaves
-                        .iter()
-                        .map(move |branch_tree_leaf| (*branch_tree_leaf, disconnected_tree_leaf))
-                })
-                .flatten()
-                .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
-                    abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
-                })
-                .unwrap()
-        } else {
-            let disconnected_tree_leaves = disconnected_tree_visited
-                .iter()
-                .enumerate()
-                .filter(|(i, in_disconnected_tree)| {
-                    **in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
-                })
-                .map(|(disconnected_idx, _)| vertices[disconnected_idx])
-                .collect::<Vec<_>>();
-
-            disconnected_tree_visited
-                .iter()
-                .enumerate()
-                .filter(|(i, in_disconnected_tree)| {
-                    !**in_disconnected_tree && adjacency_map.get(&vertices[*i]).unwrap().len() <= 1
-                })
-                .map(|(branch_idx, _)| vertices[branch_idx])
-                .map(|branch_tree_leaf| {
-                    disconnected_tree_leaves
-                        .iter()
-                        .map(move |disconnected_tree_leaf| {
-                            (branch_tree_leaf, *disconnected_tree_leaf)
+                disconnected_tree_visited
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, in_disconnected_tree)| {
+                        **in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
+                    })
+                    .map(|(disconnected_idx, _)| vertices[disconnected_idx])
+                    .flat_map(|disconnected_tree_leaf| {
+                        branch_tree_leaves.iter().map(move |branch_tree_leaf| {
+                            (*branch_tree_leaf, disconnected_tree_leaf)
                         })
-                })
-                .flatten()
-                .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
-                    abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
-                })
-                .unwrap()
-        };
+                    })
+                    .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
+                        abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
+                    })
+                    .unwrap()
+            } else {
+                let disconnected_tree_leaves = disconnected_tree_visited
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, in_disconnected_tree)| {
+                        **in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
+                    })
+                    .map(|(disconnected_idx, _)| vertices[disconnected_idx])
+                    .collect::<Vec<_>>();
+
+                disconnected_tree_visited
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, in_disconnected_tree)| {
+                        !**in_disconnected_tree && adjacency_map[&vertices[*i]].len() <= 1
+                    })
+                    .map(|(branch_idx, _)| vertices[branch_idx])
+                    .flat_map(|branch_tree_leaf| {
+                        disconnected_tree_leaves
+                            .iter()
+                            .map(move |disconnected_tree_leaf| {
+                                (branch_tree_leaf, *disconnected_tree_leaf)
+                            })
+                    })
+                    .min_by_key(|(branch_tree_leaf, disconnected_tree_leaf)| {
+                        abs_distance_squared(*branch_tree_leaf, *disconnected_tree_leaf)
+                    })
+                    .unwrap()
+            };
 
         // Connect leaves
         adjacency_map
@@ -227,9 +219,7 @@ fn approximate_tsp_with_mst_greedy<
     while path.len() < vertices.len() {
         let last_vertex = *path.last().unwrap();
         let second_to_last_vertex = *path.iter().rev().nth(1).unwrap();
-        let next_vertex = adjacency_map
-            .get(&last_vertex)
-            .unwrap()
+        let next_vertex = adjacency_map[&last_vertex]
             .iter()
             .find(|adjacency| **adjacency != second_to_last_vertex)
             .unwrap();

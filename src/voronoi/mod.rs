@@ -98,13 +98,9 @@ pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitiv
         }
     });
 
-    let positions = Array::from_iter(
-        (0..width)
-            .map(|x| (0..height).map(move |y| [x, y]))
-            .flatten(),
-    )
-    .into_shape((width, height))
-    .unwrap();
+    let positions = Array::from_iter((0..width).flat_map(|x| (0..height).map(move |y| [x, y])))
+        .into_shape((width, height))
+        .unwrap();
 
     let mut scratchpad = grid.clone();
 

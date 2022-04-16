@@ -1,4 +1,3 @@
-use log::info;
 use ndarray::prelude::*;
 use ndarray::Array3;
 use std::fmt;
@@ -66,15 +65,15 @@ impl FromStr for Color {
             let mut res = [0.; 3];
             match hex.len() {
                 3 => {
-                    for i in 0..3 {
+                    for (i, res_i) in res.iter_mut().enumerate() {
                         // Hex shorthand: convert 0xFFF into 1.0, 1.0, 1.0
                         let digit = (parsed >> (8 - 4 * i) & 0xF) as u8;
-                        res[i] = (digit << 4 | digit) as f64 / 255.;
+                        *res_i = (digit << 4 | digit) as f64 / 255.;
                     }
                 }
                 6 => {
-                    for i in 0..3 {
-                        res[i] = ((parsed >> (16 - 8 * i) & 0xFF) as u8) as f64 / 255.;
+                    for (i, res_i) in res.iter_mut().enumerate() {
+                        *res_i = ((parsed >> (16 - 8 * i) & 0xFF) as u8) as f64 / 255.;
                     }
                 }
                 other => return Err(ColorParseError::Length(other)),
@@ -184,17 +183,18 @@ pub fn srgb_to_ciexyz(srgb: ArrayView3<f64>) -> Array3<f64> {
             let mut ciexyz_under_d65 = [0.; 3];
             for k in 0..3 {
                 let gamma_expanded = gamma_expand_rgb(srgb[[k, i, j]]);
-                for l in 0..3 {
-                    ciexyz_under_d65[l] += SRGB_TO_CIEXYZ[l][k] * gamma_expanded;
+                for (l, ciexyz_under_d65_l) in ciexyz_under_d65.iter_mut().enumerate() {
+                    *ciexyz_under_d65_l += SRGB_TO_CIEXYZ[l][k] * gamma_expanded;
                 }
             }
-            for l in 0..3 {
-                ciexyz_under_d65[l] = ciexyz_under_d65[l].clamp(0., 1.);
+            for ciexyz_under_d65_l in ciexyz_under_d65.iter_mut() {
+                *ciexyz_under_d65_l = ciexyz_under_d65_l.clamp(0., 1.);
             }
 
             for k in 0..3 {
-                for l in 0..3 {
-                    ciexyz[[k, i, j]] += CHROMATIC_ADAPTATION_TRANSFORM[k][l] * ciexyz_under_d65[l];
+                for (l, ciexyz_under_d65_l) in IntoIterator::into_iter(ciexyz_under_d65).enumerate()
+                {
+                    ciexyz[[k, i, j]] += CHROMATIC_ADAPTATION_TRANSFORM[k][l] * ciexyz_under_d65_l;
                 }
                 ciexyz[[k, i, j]] = ciexyz[[k, i, j]].clamp(0., 1.);
             }

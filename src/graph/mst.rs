@@ -64,7 +64,7 @@ where
     if !points.is_empty() {
         let first_vertex: &[T; 2] = &points[0];
         in_mst.insert(*first_vertex);
-        for edge in edges_by_vertex.get(first_vertex).unwrap() {
+        for edge in &edges_by_vertex[first_vertex] {
             edge_priority_queue.push(Reverse(edge));
         }
     }
@@ -83,7 +83,7 @@ where
                 in_mst.insert(*to);
                 mst.push([shortest_edge.0.from, shortest_edge.0.to]);
 
-                for edge in edges_by_vertex.get(&shortest_edge.0.to).unwrap() {
+                for edge in &edges_by_vertex[&shortest_edge.0.to] {
                     if in_mst.contains(&edge.to) {
                         continue;
                     }

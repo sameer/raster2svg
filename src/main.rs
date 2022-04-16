@@ -227,8 +227,7 @@ fn main() -> io::Result<()> {
     let image = Array::from_iter(
         image
             .pixels()
-            .map(|p| p.0)
-            .flatten()
+            .flat_map(|p| p.0)
             .map(|p| p as f64 / u16::MAX as f64),
     )
     .into_shape((image.height() as usize, image.width() as usize, 3))
@@ -414,8 +413,7 @@ fn main() -> io::Result<()> {
     ctx.rectangle(0., 0., width, height);
     ctx.fill().unwrap();
 
-    for k in 0..image_in_implements.raw_dim()[0] {
-        let color = colors[k];
+    for (k, color) in colors.iter().enumerate() {
         info!("Processing {}", color);
         ctx.set_source_rgb(color[0], color[1], color[2]);
         let implement_diameter = match opt.implements[k] {
