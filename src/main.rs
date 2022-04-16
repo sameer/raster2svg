@@ -1,13 +1,15 @@
+use crate::color::{a_to_nd, ciexyz_to_cielab, nd_to_a, srgb_to_ciexyz, srgb_to_hsl, Color};
 use cairo::{Context, LineCap, LineJoin, Matrix, SvgUnit};
-use color::{ciexyz_to_cielab, srgb_to_ciexyz, srgb_to_hsl};
 use image::io::Reader as ImageReader;
 use log::*;
-use lyon_geom::vector;
+use lyon_geom::{vector, Vector};
 use ndarray::{prelude::*, SliceInfo, SliceInfoElem};
 use num_traits::{PrimInt, Signed};
+use serde::{Deserialize, Serialize};
 use std::{
     env,
     fmt::Debug,
+    fs::File,
     io::{self, Read},
     path::PathBuf,
     str::FromStr,
@@ -32,19 +34,18 @@ mod render;
 /// Construct the [Voronoi diagram](https://en.wikipedia.org/wiki/Voronoi_diagram) and calculate related properties
 mod voronoi;
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, StructOpt, Deserialize, Serialize)]
 #[structopt(author, about)]
 struct Opt {
     /// A path to an image, else reads from stdin
     file: Option<PathBuf>,
 
+    #[structopt(long)]
+    config: Option<PathBuf>,
+
     /// Determines the scaling of the output SVG
     #[structopt(long, default_value = "96")]
     dots_per_inch: f64,
-
-    /// Diameter of the instrument stroke in units of your choice
-    #[structopt(long, default_value = "1 mm")]
-    diameter: Length,
 
     /// Color model to use for additive coloring
     #[structopt(
@@ -53,6 +54,7 @@ struct Opt {
         possible_values = &ColorModel::raw_variants(),
         case_insensitive = true
     )]
+    #[serde(with = "serde_with::rust::display_fromstr")]
     color_model: ColorModel,
 
     /// SVG drawing style
@@ -62,16 +64,22 @@ struct Opt {
         possible_values = &Style::raw_variants(),
         case_insensitive = true
     )]
+    #[serde(with = "serde_with::rust::display_fromstr")]
     style: Style,
 
-    /// The drawing implement used by your plotter
-    #[structopt(
-        long,
-        default_value = "pen",
-        possible_values = &Implement::raw_variants(),
-        case_insensitive = true
-    )]
-    implement: Implement,
+    /// The drawing implement(s) used by your plotter
+    // Cyan #158fd4
+    // Purple #382375
+    // Bold blue: #222c8f
+    // Bold green: #517b23
+    // Magenta: #d62e69
+    // Bold red: #dc12fa
+    // Blue: #2547b4
+    // Green: #20835f
+    // Red: #c72537
+    // Black: #312d2f or #000000
+    #[structopt(long = "implement", case_insensitive = true)]
+    implements: Vec<Implement>,
 
     /// Super-sampling factor for finer detail control
     #[structopt(long, default_value = "1")]
@@ -85,45 +93,56 @@ struct Opt {
 macro_rules! opt {
     ($name: ident {
         $(
-            $variant: ident,
+            $variant: ident $({
+                $($member: ident; $ty: ty,)*
+            })?,
         )*
     }) => {
         #[derive(Debug, Clone, Copy)]
         pub enum $name {
             $(
-                $variant,
+                $variant $({
+                    $($member: $ty,)*
+                })?,
             )*
         }
 
         paste::paste! {
             impl $name {
                 const NUM_VARIANTS: usize = 0 $(
-                    + { let _ = $name::$variant; 1 }
+                    + { let _  = stringify!(Self::$variant); 1 }
                 )*;
 
-                const fn raw_variants() -> [&'static str; Self::NUM_VARIANTS] {
-                    [$(
-                        stringify!([<$variant:snake>]),
-                    )*]
-                }
-
-                const fn variants() -> [$name; Self::NUM_VARIANTS] {
-                    use $name::*;
-                    [$(
-                        [<$variant>],
-                    )*]
+                fn raw_variants() -> [&'static str; Self::NUM_VARIANTS] {
+                    [
+                        $(
+                            stringify!([<$variant:snake>]),
+                        )*
+                    ]
                 }
             }
+
+            impl std::fmt::Display for $name {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        $(
+                            Self::$variant => f.write_str(stringify!([<$variant:snake>])),
+                        )*
+                    }
+                }
+            }
+
             impl FromStr for $name {
                 type Err = &'static str;
 
-                fn from_str(s: &str) -> Result<Self, Self::Err> {
-                    use $name::*;
-                    match s {
-                        $(
-                            stringify!([<$variant:snake>]) => Ok([<$variant>]),)*
-                        _ => Err(concat!(stringify!($name), " must be one of the following: ", $(stringify!($variant),)*)),
-                    }
+                fn from_str(data: &str) -> Result<Self, Self::Err> {
+                    $(
+                        if stringify!([<$variant:snake>]) == data {
+                            return Ok(Self::$variant);
+                        }
+                    )*
+
+                    return Err("Must be one of variants");
                 }
             }
         }
@@ -148,134 +167,241 @@ opt! {
     }
 }
 
-opt! {
-    Implement {
-        Pen,
-        Pencil,
-        Marker,
+#[derive(Debug, Deserialize, Serialize)]
+pub enum Implement {
+    Pen {
+        diameter: Length,
+        #[serde(with = "serde_with::rust::display_fromstr")]
+        color: Color,
+    },
+    Pencil,
+    Marker,
+}
+
+impl FromStr for Implement {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s)
     }
 }
 
+// Cyan #158fd4
+// Purple #382375
+// Black: #312d2f or #000000
+// Bold blue: #222c8f
+// Bold green: #517b23
+// Magenta: #d62e69
+// Bold red: #dc12fa
+// Blue: #2547b4
+// Green: #20835f
+// Red: #c72537
 fn main() -> io::Result<()> {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "raster2svg=info")
     }
     env_logger::init();
-    let opt = Opt::from_args();
+    let mut opt = Opt::from_args();
 
-    if !matches!(opt.implement, Implement::Pen) {
-        unimplemented!("instrument not implemented yet")
+    if let Some(config) = opt.config {
+        let mut config = serde_json::from_reader::<_, Opt>(File::open(&config)?)?;
+        config.file = opt.file.or(config.file);
+        config.out = opt.out.or(config.out);
+        config.implements.append(&mut opt.implements);
+        opt = config;
     }
 
-    let pen_image = {
-        let image = match opt.file {
-            Some(filepath) => ImageReader::open(filepath)?.decode(),
-            None => {
-                info!("Reading from stdin");
-                let mut bytes = vec![];
-                io::stdin().read_to_end(&mut bytes)?;
-                let cursor = io::Cursor::new(bytes);
-                ImageReader::new(cursor).decode()
-            }
+    let image = match opt.file {
+        Some(filepath) => ImageReader::open(filepath)?.decode(),
+        None => {
+            info!("Reading from stdin");
+            let mut bytes = vec![];
+            io::stdin().read_to_end(&mut bytes)?;
+            let cursor = io::Cursor::new(bytes);
+            ImageReader::new(cursor).decode()
         }
-        .expect("not an image")
-        .to_rgb16();
+    }
+    .expect("not an image")
+    .to_rgb16();
 
-        let image = Array::from_iter(
-            image
-                .pixels()
-                .map(|p| p.0)
-                .flatten()
-                .map(|p| p as f64 / u16::MAX as f64),
-        )
-        .into_shape((image.height() as usize, image.width() as usize, 3))
-        .unwrap()
-        .reversed_axes();
+    let image = Array::from_iter(
+        image
+            .pixels()
+            .map(|p| p.0)
+            .flatten()
+            .map(|p| p as f64 / u16::MAX as f64),
+    )
+    .into_shape((image.height() as usize, image.width() as usize, 3))
+    .unwrap()
+    .reversed_axes();
 
-        let image_in_cielab = ciexyz_to_cielab(srgb_to_ciexyz(image.view()).view());
-        let mut pen_image: Array3<f64> = Array3::zeros((
-            4,
-            image_in_cielab.raw_dim()[1],
-            image_in_cielab.raw_dim()[2],
-        ));
+    let image_in_cielab = ciexyz_to_cielab(srgb_to_ciexyz(image.view()).view());
+    let image_in_hsl = srgb_to_hsl(image.view());
 
-        // Key (Black) derived as the inverse of lightness
-        {
-            pen_image
-                .slice_mut(s![3, .., ..])
-                .assign(&image_in_cielab.slice(s![0, .., ..]));
-            pen_image
-                .slice_mut(s![3, .., ..])
-                .par_mapv_inplace(|v| 1.0 - v);
-        }
-        // RGB
-        // Project hue onto each pen's color to derive a value [0, 1] for
-        // how helpful a pen will be in reproducing a pixel
-        match opt.color_model {
-            ColorModel::Cielab => [
-                vector(80.81351675261305, 69.88458436386973),
-                vector(-79.28626260990568, 80.98938522093422),
-                vector(68.29938535880123, -112.03112368261236),
-            ]
-            .iter()
-            .enumerate()
-            .for_each(|(i, color)| {
-                pen_image
-                    .slice_mut(s![i, .., ..])
-                    .assign(&image_in_cielab.map_axis(Axis(0), |lab| {
-                        let hue = vector(lab[1], lab[2]);
-                        let angle = hue.angle_to(*color);
-                        if angle.radians.abs() > std::f64::consts::FRAC_PI_2 {
-                            0.0
-                        } else {
-                            hue.project_onto_vector(*color).length() / color.length()
-                        }
-                    }));
-            }),
-            ColorModel::Hsl => {
-                let image_in_hsl = srgb_to_hsl(image.view());
-                [
-                    vector(1.0, 0.0),
-                    vector(-0.5, 3.0f64.sqrt() / 2.0),
-                    vector(-0.5, -(3.0f64.sqrt()) / 2.0),
-                ]
-                .iter()
-                .enumerate()
-                .for_each(|(i, color)| {
-                    pen_image
-                        .slice_mut(s![i, .., ..])
-                        .assign(&image_in_hsl.map_axis(Axis(0), |hsl| {
-                            let (sin, cos) = hsl[0].sin_cos();
-                            let hue_vector = vector(cos, sin) * hsl[1];
-                            if hue_vector.angle_to(*color).radians.abs()
-                                > std::f64::consts::FRAC_PI_2
-                            {
-                                0.0
-                            } else {
-                                hue_vector.project_onto_vector(*color).length() * hsl[2]
-                            }
-                        }));
-                })
-            }
-        }
-
-        // Linearize color mapping for line drawings
-        if matches!(opt.style, Style::Tsp | Style::Mst) {
-            pen_image.mapv_inplace(|v| v.powi(2));
-        } else if matches!(opt.style, Style::Triangulation | Style::Voronoi) {
-            pen_image.mapv_inplace(|v| v.powi(3));
-        }
-
-        pen_image
-    };
+    let mut image_in_implements = Array3::<f64>::zeros((
+        opt.implements.len(),
+        image_in_cielab.raw_dim()[1],
+        image_in_cielab.raw_dim()[2],
+    ));
 
     let mm_per_inch = Length::new::<inch>(1.).get::<millimeter>();
     let dots_per_mm = opt.dots_per_inch / mm_per_inch;
-    let instrument_diameter = opt.diameter.get::<millimeter>();
-    let instrument_diameter_in_pixels = instrument_diameter * dots_per_mm;
 
-    let width = (pen_image.raw_dim()[1] as f64 / dots_per_mm / opt.super_sample as f64).round();
-    let height = (pen_image.raw_dim()[2] as f64 / dots_per_mm / opt.super_sample as f64).round();
+    let colors = opt
+        .implements
+        .iter()
+        .map(|implement| {
+            if let Implement::Pen { color, .. } = implement {
+                color
+            } else {
+                unimplemented!()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    match opt.color_model {
+        ColorModel::Hsl => {
+            let (_, width, height) = image_in_hsl.dim();
+            for x in 0..width {
+                for y in 0..height {
+                    let hsl = image_in_hsl.slice(s![.., x, y]);
+                    let (sin, cos) = hsl[0].sin_cos();
+                    let image_hue_vector: Vector<_> = vector(cos, sin) * hsl[1];
+                    for (i, c) in colors.iter().enumerate() {
+                        if c[0] < f64::EPSILON && c[1] < f64::EPSILON && c[2] < f64::EPSILON {
+                            image_in_implements[[i, x, y]] = 1. - hsl[2];
+                        } else {
+                            let color_hsl = nd_to_a::<3>(srgb_to_hsl(a_to_nd(c.as_ref()).view()));
+                            let (sin, cos) = color_hsl[0].sin_cos();
+                            let color_hue_vector = vector(cos, sin) * color_hsl[1];
+
+                            image_in_implements[[i, x, y]] =
+                                // Can't blend colors, this color is useless
+                                if image_hue_vector.angle_to(color_hue_vector).radians.abs()
+                                    > std::f64::consts::FRAC_PI_2
+                                {
+                                    0.0
+                                } else {
+                                    image_hue_vector
+                                        .project_onto_vector(color_hue_vector)
+                                        .length()
+                                        // Can't increase saturation beyond the max
+                                        .min(color_hsl[1])
+                                };
+                        }
+                    }
+                }
+            }
+        }
+        ColorModel::Cielab => {}
+    }
+
+    // pen_image
+    //     .slice_mut(s![i, .., ..])
+    //     .assign(&image_in_cielab.map_axis(Axis(0), |lab| {
+    //         let hue = vector(lab[1], lab[2]);
+    //         let angle = hue.angle_to(*color);
+    //         if angle.radians.abs() > std::f64::consts::FRAC_PI_2 {
+    //             0.0
+    //         } else {
+    //             hue.project_onto_vector(*color).length() / color.length()
+    //         }
+    //     }));
+    // for implement in &opt.implements {
+    //     if let Implement::Pen { diameter, color } = implement {
+    //         let diameter = diameter.get::<millimeter>();
+    //         let diameter_in_pixels = diameter * dots_per_mm;
+    //     }
+    // }
+
+    // let pen_image = {
+    //     let mut pen_image: Array3<f64> = Array3::zeros((
+    //         4,
+    //         image_in_cielab.raw_dim()[1],
+    //         image_in_cielab.raw_dim()[2],
+    //     ));
+
+    //     // Key (Black) derived as the inverse of lightness
+    //     {
+    //         pen_image
+    //             .slice_mut(s![3, .., ..])
+    //             .assign(&image_in_cielab.slice(s![0, .., ..]));
+    //         pen_image
+    //             .slice_mut(s![3, .., ..])
+    //             .par_mapv_inplace(|v| 1.0 - v);
+    //     }
+    //     // RGB
+    //     // Project hue onto each pen's color to derive a value [0, 1] for
+    //     // how helpful a pen will be in reproducing a pixel
+    //     match opt.color_model {
+    //         ColorModel::Cielab => [
+    //             vector(80.81351675261305, 69.88458436386973),
+    //             vector(-79.28626260990568, 80.98938522093422),
+    //             vector(68.29938535880123, -112.03112368261236),
+    //         ]
+    //         .iter()
+    //         .enumerate()
+    //         .for_each(|(i, color)| {
+    //             pen_image
+    //                 .slice_mut(s![i, .., ..])
+    //                 .assign(&image_in_cielab.map_axis(Axis(0), |lab| {
+    //                     let hue = vector(lab[1], lab[2]);
+    //                     let angle = hue.angle_to(*color);
+    //                     if angle.radians.abs() > std::f64::consts::FRAC_PI_2 {
+    //                         0.0
+    //                     } else {
+    //                         hue.project_onto_vector(*color).length() / color.length()
+    //                     }
+    //                 }));
+    //         }),
+    //         ColorModel::Hsl => {
+    //             let image_in_hsl = srgb_to_hsl(image.view());
+    //             [
+    //                 vector(1.0, 0.0),
+    //                 vector(-0.5, 3.0f64.sqrt() / 2.0),
+    //                 vector(-0.5, -(3.0f64.sqrt()) / 2.0),
+    //             ]
+    //             .iter()
+    //             .enumerate()
+    //             .for_each(|(i, color)| {
+    //                 pen_image
+    //                     .slice_mut(s![i, .., ..])
+    //                     .assign(&image_in_hsl.map_axis(Axis(0), |hsl| {
+    //                         let (sin, cos) = hsl[0].sin_cos();
+    //                         let hue_vector = vector(cos, sin) * hsl[1];
+    //                         if hue_vector.angle_to(*color).radians.abs()
+    //                             > std::f64::consts::FRAC_PI_2
+    //                         {
+    //                             0.0
+    //                         } else {
+    //                             hue_vector.project_onto_vector(*color).length() * hsl[2]
+    //                         }
+    //                     }));
+    //             })
+    //         }
+    //     }
+
+    //     // Linearize color mapping for line drawings
+    //     if matches!(opt.style, Style::Tsp | Style::Mst) {
+    //         pen_image.mapv_inplace(|v| v.powi(2));
+    //     } else if matches!(opt.style, Style::Triangulation | Style::Voronoi) {
+    //         pen_image.mapv_inplace(|v| v.powi(3));
+    //     }
+
+    //     pen_image
+    // };
+
+    // Linearize color mapping for line drawings
+    if matches!(opt.style, Style::Tsp | Style::Mst) {
+        image_in_implements.mapv_inplace(|v| v.powi(2));
+    } else if matches!(opt.style, Style::Triangulation | Style::Voronoi) {
+        image_in_implements.mapv_inplace(|v| v.powi(3));
+    }
+
+    let width =
+        (image_in_implements.raw_dim()[1] as f64 / dots_per_mm / opt.super_sample as f64).round();
+    let height =
+        (image_in_implements.raw_dim()[2] as f64 / dots_per_mm / opt.super_sample as f64).round();
 
     let mut surf = match &opt.out {
         Some(_) => cairo::SvgSurface::new(width, height, opt.out).unwrap(),
@@ -288,29 +414,28 @@ fn main() -> io::Result<()> {
     ctx.rectangle(0., 0., width, height);
     ctx.fill().unwrap();
 
-    ctx.set_line_cap(LineCap::Round);
-    ctx.set_line_join(LineJoin::Round);
-    ctx.set_line_width(instrument_diameter);
-
-    for k in 0..=3 {
-        info!("Processing {}", k);
-        if k == 0 {
-            ctx.set_source_rgb(1., 0., 0.);
-        } else if k == 1 {
-            ctx.set_source_rgb(0., 1., 0.);
-        } else if k == 2 {
-            ctx.set_source_rgb(0., 0., 1.);
-        } else if k == 3 {
-            ctx.set_source_rgb(0., 0., 0.);
-        }
-
+    for k in 0..image_in_implements.raw_dim()[0] {
+        let color = colors[k];
+        info!("Processing {}", color);
+        ctx.set_source_rgb(color[0], color[1], color[2]);
+        let implement_diameter = match opt.implements[k] {
+            Implement::Pen { diameter, .. } => {
+                ctx.set_line_cap(LineCap::Round);
+                ctx.set_line_join(LineJoin::Round);
+                diameter.get::<millimeter>()
+            }
+            Implement::Pencil => todo!(),
+            Implement::Marker => todo!(),
+        };
+        ctx.set_line_width(implement_diameter);
+        let implement_diameter_in_pixels = implement_diameter * dots_per_mm;
         match opt.style {
             Style::EdgesPlusHatching => {
                 if k == 3 {
                     render_fdog_based(
-                        pen_image.slice(s![k, .., ..]),
+                        image_in_implements.slice(s![k, .., ..]),
                         opt.super_sample,
-                        instrument_diameter_in_pixels,
+                        implement_diameter_in_pixels,
                         opt.style,
                         &ctx,
                         {
@@ -325,9 +450,9 @@ fn main() -> io::Result<()> {
                 }
             }
             _ => render_stipple_based(
-                pen_image.slice(s![k, .., ..]),
+                image_in_implements.slice(s![k, .., ..]),
                 opt.super_sample,
-                instrument_diameter_in_pixels,
+                implement_diameter_in_pixels,
                 opt.style,
                 &ctx,
                 {

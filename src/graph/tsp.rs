@@ -1,9 +1,11 @@
 use crate::abs_distance_squared;
 use bitvec::prelude::*;
+use log::*;
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rand::{distributions::Standard, prelude::Distribution, thread_rng, Rng};
+use rayon::prelude::*;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::{fmt::Debug, hash::Hash, iter::Sum};
+use std::{collections::VecDeque, fmt::Debug, hash::Hash, iter::Sum};
 
 #[derive(PartialEq, Eq, Debug)]
 struct Edge<T: Debug>([[T; 2]; 2]);
@@ -37,7 +39,18 @@ impl<T: PrimInt + Signed + Eq + PartialEq + PartialOrd + Ord + Debug> Ord for Ed
 /// TODO: consider using the Christofides algorithm which has a bound on the length of the worst path.
 /// The initial solution of greedy branch elimination is actually quite bad.
 pub fn approximate_tsp_with_mst<
-    T: PrimInt + Signed + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
+    T: PrimInt
+        + Signed
+        + FromPrimitive
+        + Eq
+        + PartialEq
+        + PartialOrd
+        + Ord
+        + Hash
+        + Debug
+        + Sum
+        + Send
+        + Sync,
 >(
     vertices: &[[T; 2]],
     tree: &[[[T; 2]; 2]],
@@ -47,6 +60,16 @@ pub fn approximate_tsp_with_mst<
     } else if vertices.len() == 2 {
         return vertices.to_vec();
     }
+    let path = approximate_tsp_with_mst_greedy(vertices, tree);
+    local_improvement_with_tabu_search::<_, false>(&path)
+}
+
+fn approximate_tsp_with_mst_greedy<
+    T: PrimInt + Signed + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
+>(
+    vertices: &[[T; 2]],
+    tree: &[[[T; 2]; 2]],
+) -> Vec<[T; 2]> {
     let mut adjacency_map: HashMap<[T; 2], HashSet<[T; 2]>> = HashMap::default();
     tree.iter().for_each(|edge| {
         adjacency_map.entry(edge[0]).or_default().insert(edge[1]);
@@ -212,7 +235,8 @@ pub fn approximate_tsp_with_mst<
             .unwrap();
         path.push(*next_vertex);
     }
-    local_improvement(&path)
+
+    path
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -220,8 +244,15 @@ enum Operator {
     /// Move vertex between other vertices
     Relocate,
     /// Swap vertices between two edges
+    ///
+    /// This does not implement the paper's version of 2-opt where
+    /// the terminal nodes are linked to dummy terminals.
     TwoOpt,
     /// Change the beginning and/or end of the path by swapping an edge
+    ///
+    /// In the words of the paper:
+    /// > Link swap is a special case of 3–opt and relocate operator, but as the size of the neighborhood is linear,
+    /// > it is a faster operation than both 3–opt and relocate operator.
     LinkSwap,
 }
 
@@ -238,13 +269,24 @@ impl Distribution<Operator> for Standard {
 }
 
 /// Local improvement of an open loop TSP solution using the relocate, disentangle, 2-opt, and link swap operators.
-///
-/// Uses random sampling when the path is too long for brute force search.
+/// Tabu search is used to avoid getting stuck early in local minima.
 ///
 /// <https://www.mdpi.com/2076-3417/9/19/3985/pdf>
 ///
-fn local_improvement<
-    T: PrimInt + Signed + FromPrimitive + Eq + PartialEq + PartialOrd + Ord + Hash + Debug + Sum,
+fn local_improvement_with_tabu_search<
+    T: PrimInt
+        + Signed
+        + FromPrimitive
+        + Eq
+        + PartialEq
+        + PartialOrd
+        + Ord
+        + Hash
+        + Debug
+        + Sum
+        + Send
+        + Sync,
+    const SHOULD_SAMPLE: bool,
 >(
     path: &[[T; 2]],
 ) -> Vec<[T; 2]> {
@@ -262,11 +304,18 @@ fn local_improvement<
         .map(|(from, to)| abs_distance_squared(*from, *to))
         .collect::<Vec<_>>();
     let mut current_sum = best_sum;
-    let mut rng = thread_rng();
 
     let sample_count = (current.len() as f64 * 0.001) as usize;
-    let should_sample = false; //path.len() > 2000;
     const ITERATIONS: usize = 20000;
+
+    let mut rng = thread_rng();
+
+    /// 10% of the past moves are considered tabu
+    const TABU_FRACTION: f64 = 0.1;
+    let tabu_capacity = (current.len() as f64 * TABU_FRACTION) as usize;
+    let mut tabu: VecDeque<usize> = VecDeque::with_capacity(tabu_capacity);
+    let mut tabu_set: HashSet<usize> = HashSet::default();
+    tabu_set.reserve(tabu_capacity);
 
     let mut stuck_by_operator = [Operator::Relocate, Operator::TwoOpt, Operator::LinkSwap]
         .iter()
@@ -274,8 +323,16 @@ fn local_improvement<
         .collect::<HashMap<_, _>>();
 
     for idx in 0..ITERATIONS {
-        if stuck_by_operator.values().all(|x| *x) && !should_sample {
-            break;
+        if stuck_by_operator.values().all(|x| *x) && !SHOULD_SAMPLE {
+            if tabu.is_empty() {
+                info!("Stuck!");
+                break;
+            } else {
+                // Try to unstick by clearing tabu
+                tabu.clear();
+                tabu_set.clear();
+                stuck_by_operator.values_mut().for_each(|val| *val = false);
+            }
         }
 
         let operator: Operator = rng.gen();
@@ -284,14 +341,15 @@ fn local_improvement<
             // O(v^2)
             Operator::Relocate => {
                 // Which i should be considered for relocation
-                let relocates = if should_sample {
+                let relocates = if SHOULD_SAMPLE {
                     0..sample_count
                 } else {
                     1..current.len().saturating_sub(1)
                 }
+                .into_par_iter()
                 .map(|i| {
-                    if should_sample {
-                        rng.gen_range(1..current.len().saturating_sub(1))
+                    if SHOULD_SAMPLE {
+                        thread_rng().gen_range(1..current.len().saturating_sub(1))
                     } else {
                         i
                     }
@@ -299,6 +357,7 @@ fn local_improvement<
 
                 // move i between j and j+1
                 let best = relocates
+                    .filter(|i| !tabu_set.contains(i))
                     .map(|i| {
                         // pre-computed to save time,
                         // relies on triangle property to avoid overflow:
@@ -309,7 +368,11 @@ fn local_improvement<
                             - abs_distance_squared(current[i - 1], current[i + 1]);
                         // j must be in [0, i-2] U [i+1, N-1] for the move to be valid
                         (0..i.saturating_sub(2))
-                            .chain(i.saturating_add(1)..current.len().saturating_sub(1))
+                            .into_par_iter()
+                            .chain(
+                                (i.saturating_add(1)..current.len().saturating_sub(1))
+                                    .into_par_iter(),
+                            )
                             .map(move |j| (i, j, unlink_i_improvement))
                     })
                     .flatten()
@@ -340,6 +403,8 @@ fn local_improvement<
                             current[idx + 1] = current[idx];
                         }
                         current[j + 1] = vertex;
+                        tabu.push_back(j + 1);
+                        tabu_set.insert(j + 1);
                     } else {
                         // j is after in the path
                         // shift to the left and insert vertex
@@ -347,19 +412,22 @@ fn local_improvement<
                             current[idx] = current[idx + 1];
                         }
                         current[j] = vertex;
+                        tabu.push_back(j);
+                        tabu_set.insert(j);
                     }
                 }
             }
             // O(v^2)
             Operator::TwoOpt => {
-                let edges = if should_sample {
+                let edges = if SHOULD_SAMPLE {
                     0..sample_count
                 } else {
                     0..current.len().saturating_sub(1)
                 }
+                .into_par_iter()
                 .map(|i| {
-                    if should_sample {
-                        rng.gen_range(0..current.len().saturating_sub(1))
+                    if SHOULD_SAMPLE {
+                        thread_rng().gen_range(0..current.len().saturating_sub(1))
                     } else {
                         i
                     }
@@ -369,18 +437,25 @@ fn local_improvement<
                 let best = edges
                     .map(|(i, j)| {
                         (0..i)
-                            .zip(1..i)
+                            .into_par_iter()
+                            .zip((1..i).into_par_iter())
+                            // Note that other and (i,j) are swapped so that
+                            // the this edge is always before the other edge
                             .map(move |other| (other, (i, j)))
                             // If we aren't sampling, it is pointless to use these because
                             // we already saw them.
-                            .filter(|_| should_sample)
+                            .filter(|_| SHOULD_SAMPLE)
                             .chain(
                                 (j.saturating_add(1)..current.len())
-                                    .zip(j.saturating_add(2)..current.len())
+                                    .into_par_iter()
+                                    .zip((j.saturating_add(2)..current.len()).into_par_iter())
                                     .map(move |other| ((i, j), other)),
                             )
                     })
                     .flatten()
+                    .filter(|(this, other)| {
+                        !tabu_set.contains(&this.1) && !tabu_set.contains(&other.0)
+                    })
                     // Examine all edge pairs
                     .map(|(this, other)| {
                         (
@@ -406,17 +481,22 @@ fn local_improvement<
                             .values_mut()
                             .for_each(|stuck| *stuck = false);
                     }
+                    let tabu_add = [this.1, other.0];
+                    tabu.extend(tabu_add);
+                    tabu_set.extend(tabu_add);
                     current[this.1..=other.0].reverse();
                 }
             }
-            // O(v) (3v)
+            // O(v) 3*(v-1)
             Operator::LinkSwap => {
                 let first = *current.first().unwrap();
                 let last = *current.last().unwrap();
 
-                // Swap the first and/or last vertex with inner vertices
-                let best = (0..current.len())
-                    .zip(1..current.len())
+                // Change from=>to to from=>last, first=>to, or first=>last
+                let best = (1..current.len())
+                    .into_par_iter()
+                    .zip((2..current.len().saturating_sub(1)).into_par_iter())
+                    .filter(|(i, j)| !tabu_set.contains(i) && !tabu_set.contains(j))
                     .map(|(i, j)| {
                         let from = current[i];
                         let to = current[j];
@@ -442,12 +522,18 @@ fn local_improvement<
                             .for_each(|stuck| *stuck = false);
                     }
 
-                    // Swapped first and from
+                    // Change from=>to to first=>____
                     if new_edge[0] != original_edge[0] {
+                        let tabu_add = [i];
+                        tabu.extend(tabu_add);
+                        tabu_set.extend(tabu_add);
                         current[..=i].reverse();
                     }
-                    // Swapped to and last
+                    // Change from=>to to ____=>last
                     if new_edge[1] != original_edge[1] {
+                        let tabu_add = [j];
+                        tabu.extend(tabu_add);
+                        tabu_set.extend(tabu_add);
                         current[j..].reverse();
                     }
                 }
@@ -470,10 +556,23 @@ fn local_improvement<
             current_sum
         );
 
-        dbg!(idx, current_sum, best_sum);
         if current_sum < best_sum {
             best = current.clone();
             best_sum = current_sum;
+        }
+
+        info!(
+            "Iteration {}/{} (best: {:?}, tabu: {}/{}, len: {})",
+            idx,
+            ITERATIONS,
+            best_sum,
+            tabu.len(),
+            tabu_capacity,
+            current.len(),
+        );
+
+        while tabu.len() > tabu_capacity {
+            tabu_set.remove(&tabu.pop_front().unwrap());
         }
     }
 

@@ -13,7 +13,7 @@ image = { version = "0.23", features = ["jpeg", "png", "tiff", "bmp"] }
 structopt = "0.3"
 log = "0"
 env_logger = { version = "0", default-features = false, features = ["atty", "termcolor", "humantime"] }
-uom = "0.32"
+uom = { version = "0.32", features = ["use_serde"] }
 ndarray = { version = "0.15", features = ["rayon"] }
 rand = { version = "0.8", features = ["alloc"] }
 spade = "1.8"
@@ -23,6 +23,10 @@ lyon_geom = "0.17"
 bitvec = "1"
 paste = "1"
 ndarray-stats = "0.5"
+rayon = "1.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = "1.12"
 
 [dev-dependencies]
-pretty_assertions = "0.7"
+pretty_assertions = "1.2"

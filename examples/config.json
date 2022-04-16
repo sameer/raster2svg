@@ -1,0 +1,14 @@
+{
+    "dots_per_inch": 96,
+    "style": "tsp",
+    "color_model": "hsl",
+    "super_sample": 1,
+    "implements": [
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#000000"
+            }
+        }
+    ]
+}

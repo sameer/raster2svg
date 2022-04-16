@@ -1,5 +1,103 @@
+use log::info;
 use ndarray::prelude::*;
 use ndarray::Array3;
+use std::fmt;
+use std::fmt::Display;
+use std::num::ParseIntError;
+use std::ops::Index;
+use std::str::FromStr;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Color([f64; 3]);
+
+impl Index<usize> for Color {
+    type Output = f64;
+    fn index(&'_ self, i: usize) -> &'_ Self::Output {
+        &self.0[i]
+    }
+}
+
+impl AsRef<[f64; 3]> for Color {
+    fn as_ref(&self) -> &[f64; 3] {
+        &self.0
+    }
+}
+
+impl Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "#{:02x}{:02x}{:02x}",
+            (self[0] * 256.) as u8,
+            (self[1] * 256.) as u8,
+            (self[2] * 256.) as u8
+        )
+    }
+}
+
+pub enum ColorParseError {
+    Int(ParseIntError),
+    Length(usize),
+    MissingPound,
+}
+
+impl fmt::Display for ColorParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Int(e) => write!(f, "{}", e),
+            Self::Length(l) => write!(f, "Unexpected length {} should be 3 or 6", l),
+            Self::MissingPound => write!(f, "Color should be preceded by a pound symbol"),
+        }
+    }
+}
+
+impl From<ParseIntError> for ColorParseError {
+    fn from(e: ParseIntError) -> Self {
+        Self::Int(e)
+    }
+}
+
+impl FromStr for Color {
+    type Err = ColorParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        if let Some(hex) = input.strip_prefix('#') {
+            let parsed = u32::from_str_radix(hex, 16)?;
+            let mut res = [0.; 3];
+            match hex.len() {
+                3 => {
+                    for i in 0..3 {
+                        // Hex shorthand: convert 0xFFF into 1.0, 1.0, 1.0
+                        let digit = (parsed >> (8 - 4 * i) & 0xF) as u8;
+                        res[i] = (digit << 4 | digit) as f64 / 255.;
+                    }
+                }
+                6 => {
+                    for i in 0..3 {
+                        res[i] = ((parsed >> (16 - 8 * i) & 0xFF) as u8) as f64 / 255.;
+                    }
+                }
+                other => return Err(ColorParseError::Length(other)),
+            }
+            Ok(Self(res))
+        } else {
+            Err(ColorParseError::MissingPound)
+        }
+    }
+}
+
+pub fn a_to_nd<const N: usize>(x: &[f64; N]) -> Array3<f64> {
+    Array3::<f64>::from_shape_vec((N, 1, 1), x.as_ref().to_vec()).unwrap()
+}
+
+pub fn nd_to_a<const N: usize>(a: Array3<f64>) -> [f64; N] {
+    let view = a.slice(s![.., 0, 0]);
+    let mut res = [0.; N];
+    for i in 0..N {
+        res[i] = view[i];
+    }
+    res
+}
 
 /// sRGB to Hue, Saturation, Lightness (HSL)
 ///
@@ -144,7 +242,7 @@ pub fn ciexyz_to_cielab(ciexyz: ArrayView3<f64>) -> Array3<f64> {
 
 /// Function defined in CIEXYZ to CIELAB conversion
 ///
-/// https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB
+/// <https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB>
 fn cielab_f(t: f64) -> f64 {
     const DELTA_POW3: f64 = 216. / 24389.;
     const THREE_DELTA_POW2: f64 = 108. / 841.;
@@ -159,7 +257,7 @@ fn cielab_f(t: f64) -> f64 {
 
 /// Gamma-expand (or linearize) an sRGB value
 ///
-/// https://en.wikipedia.org/wiki/SRGB#From_sRGB_to_CIE_XYZ
+/// <https://en.wikipedia.org/wiki/SRGB#From_sRGB_to_CIE_XYZ>
 fn gamma_expand_rgb(component: f64) -> f64 {
     if component <= 0.04045 {
         component / 12.92
@@ -179,7 +277,8 @@ mod tests {
             [0., 1., 0.],
             [0., 0., 1.],
             [1., 1., 1.],
-            [0., 0., 0.]
+            [0.89, 0.89, 0.89],
+            [0., 0., 0.],
         ]]
         .reversed_axes();
         assert_eq!(
@@ -189,6 +288,7 @@ mod tests {
                 [std::f64::consts::FRAC_PI_3 * 2., 1., 0.5],
                 [std::f64::consts::FRAC_PI_3 * 4., 1., 0.5],
                 [0., 0., 1.],
+                [0., 0., 0.89],
                 [0., 0., 0.],
             ]]
         );
