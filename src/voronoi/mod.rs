@@ -144,8 +144,7 @@ pub fn colors_to_assignments<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
         return vec![];
     }
     let expected_assignment_capacity = grid.len() / sites.len();
-    let mut sites_to_points =
-        vec![Vec::<[T; 2]>::with_capacity(expected_assignment_capacity); sites.len()];
+    let mut sites_to_points = vec![Vec::with_capacity(expected_assignment_capacity); sites.len()];
     grid.indexed_iter().for_each(|((i, j), site)| {
         sites_to_points[*site].push([T::from_usize(i).unwrap(), T::from_usize(j).unwrap()])
     });

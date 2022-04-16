@@ -6,7 +6,7 @@ use spade::{
 };
 use std::{cmp::Reverse, collections::BinaryHeap, fmt::Debug, hash::Hash};
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Debug)]
 struct PriorityQueueEdge<T: PrimInt + PartialEq + Eq + PartialOrd + Ord> {
     from: [T; 2],
     to: [T; 2],
@@ -39,32 +39,28 @@ pub fn compute_mst<T>(
 where
     T: PrimInt + Signed + FromPrimitive + Hash + Debug + SpadeNum,
 {
-    let mut edges_by_vertex: HashMap<[T; 2], Vec<PriorityQueueEdge<T>>> = HashMap::default();
-    delaunay.edges().for_each(|edge| {
-        let from: [T; 2] = *edge.from();
-        let to: [T; 2] = *edge.to();
-        edges_by_vertex
-            .entry(from)
-            .or_default()
-            .push(PriorityQueueEdge { from, to });
-        edges_by_vertex
-            .entry(to)
-            .or_default()
-            .push(PriorityQueueEdge {
-                // Flip these for easier building of the MST
-                from: to,
-                to: from,
-            });
+    let mut edges_by_vertex: HashMap<_, Vec<_>> = HashMap::default();
+    edges_by_vertex.reserve(delaunay.num_vertices());
+    delaunay.vertices().for_each(|vertex| {
+        vertex.ccw_out_edges().for_each(|edge| {
+            let from = *edge.from();
+            let to = *edge.to();
+            edges_by_vertex
+                .entry(from)
+                .or_default()
+                .push(PriorityQueueEdge { from, to });
+        });
     });
 
-    let mut in_mst: HashSet<[T; 2]> = HashSet::default();
+    let mut in_mst = HashSet::default();
+    in_mst.reserve(points.len());
     let mut edge_priority_queue = BinaryHeap::new();
 
     // Kickstart MST with 1 vertex
     if !points.is_empty() {
-        let first_vertex: &[T; 2] = &points[0];
-        in_mst.insert(*first_vertex);
-        for edge in &edges_by_vertex[first_vertex] {
+        let first_vertex = points[0];
+        in_mst.insert(first_vertex);
+        for edge in &edges_by_vertex[&first_vertex] {
             edge_priority_queue.push(Reverse(edge));
         }
     }
@@ -79,7 +75,7 @@ where
             true => continue,
             // Add edges introduced by new vertex
             false => {
-                let to: &[T; 2] = &shortest_edge.0.to;
+                let to = &shortest_edge.0.to;
                 in_mst.insert(*to);
                 mst.push([shortest_edge.0.from, shortest_edge.0.to]);
 
@@ -89,11 +85,11 @@ where
                     }
                     edge_priority_queue.push(Reverse(edge));
                 }
+                if mst.len() == points.len().saturating_sub(1) {
+                    // Early stopping condition, MST already has all the edges
+                    break;
+                }
             }
-        }
-        if mst.len() == points.len().saturating_sub(1) {
-            // Early stopping condition, MST already has all the edges
-            break;
         }
     }
     mst

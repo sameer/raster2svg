@@ -70,7 +70,7 @@ fn approximate_tsp_with_mst_greedy<
     vertices: &[[T; 2]],
     tree: &[[[T; 2]; 2]],
 ) -> Vec<[T; 2]> {
-    let mut adjacency_map: HashMap<[T; 2], HashSet<[T; 2]>> = HashMap::default();
+    let mut adjacency_map: HashMap<_, HashSet<_>> = HashMap::default();
     tree.iter().for_each(|edge| {
         adjacency_map.entry(edge[0]).or_default().insert(edge[1]);
         adjacency_map.entry(edge[1]).or_default().insert(edge[0]);
@@ -206,7 +206,7 @@ fn approximate_tsp_with_mst_greedy<
     }
 
     // Extract path from the adjacency list
-    let mut path: Vec<[T; 2]> = Vec::with_capacity(vertices.len());
+    let mut path = Vec::with_capacity(vertices.len());
     if let Some((first_vertex, adjacencies)) = adjacency_map
         .iter()
         .find(|(_, adjacencies)| adjacencies.len() == 1)
