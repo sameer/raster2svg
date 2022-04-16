@@ -213,6 +213,10 @@ enum Operator {
     LinkSwap,
 }
 
+impl Operator {
+    const NUM_OPERATORS: usize = 3;
+}
+
 impl Distribution<Operator> for Standard {
     /// Based on productivity results in the paper, link swap is given a chance of 50% while relocate and 2-opt have 25% each
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Operator {
@@ -274,13 +278,10 @@ fn local_improvement_with_tabu_search<
     let mut tabu_set: HashSet<usize> = HashSet::default();
     tabu_set.reserve(tabu_capacity);
 
-    let mut stuck_by_operator = [Operator::Relocate, Operator::TwoOpt, Operator::LinkSwap]
-        .iter()
-        .map(|operator| (*operator, false))
-        .collect::<HashMap<_, _>>();
+    let mut stuck_operators = HashSet::default();
 
     for idx in 0..ITERATIONS {
-        if stuck_by_operator.values().all(|x| *x) && !SHOULD_SAMPLE {
+        if stuck_operators.len() == Operator::NUM_OPERATORS && !SHOULD_SAMPLE {
             if tabu.is_empty() {
                 info!("Stuck!");
                 break;
@@ -288,7 +289,7 @@ fn local_improvement_with_tabu_search<
                 // Try to unstick by clearing tabu
                 tabu.clear();
                 tabu_set.clear();
-                stuck_by_operator.values_mut().for_each(|val| *val = false);
+                stuck_operators.clear();
             }
         }
 
@@ -345,12 +346,10 @@ fn local_improvement_with_tabu_search<
 
                 if let Some((i, j, diff)) = best {
                     if diff <= T::zero() {
-                        *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                        stuck_operators.insert(operator);
                         continue;
                     } else {
-                        stuck_by_operator
-                            .values_mut()
-                            .for_each(|stuck| *stuck = false);
+                        stuck_operators.clear();
                     }
                     let vertex = current[i];
                     if j + 1 < i {
@@ -373,7 +372,7 @@ fn local_improvement_with_tabu_search<
                         tabu_set.insert(j);
                     }
                 } else {
-                    *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                    stuck_operators.insert(operator);
                     continue;
                 }
             }
@@ -434,19 +433,17 @@ fn local_improvement_with_tabu_search<
 
                 if let Some((this, other, diff)) = best {
                     if diff <= T::zero() {
-                        *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                        stuck_operators.insert(operator);
                         continue;
                     } else {
-                        stuck_by_operator
-                            .values_mut()
-                            .for_each(|stuck| *stuck = false);
+                        stuck_operators.clear();
                     }
                     let tabu_add = [this.1, other.0];
                     tabu.extend(tabu_add);
                     tabu_set.extend(tabu_add);
                     current[this.1..=other.0].reverse();
                 } else {
-                    *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                    stuck_operators.insert(operator);
                     continue;
                 }
             }
@@ -477,12 +474,10 @@ fn local_improvement_with_tabu_search<
 
                 if let Some((i, j, original_edge, new_edge, diff)) = best {
                     if diff <= T::zero() {
-                        *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                        stuck_operators.insert(operator);
                         continue;
                     } else {
-                        stuck_by_operator
-                            .values_mut()
-                            .for_each(|stuck| *stuck = false);
+                        stuck_operators.clear();
                     }
 
                     // Change from=>to to first=>____
@@ -500,7 +495,7 @@ fn local_improvement_with_tabu_search<
                         current[j..].reverse();
                     }
                 } else {
-                    *stuck_by_operator.get_mut(&operator).unwrap() = true;
+                    stuck_operators.insert(operator);
                     continue;
                 }
             }
