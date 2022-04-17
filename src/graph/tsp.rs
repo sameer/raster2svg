@@ -82,28 +82,39 @@ fn approximate_tsp_with_mst_greedy<
     tree: &[[[T; 2]; 2]],
 ) -> Vec<[T; 2]> {
     let mut adjacency_map: HashMap<_, HashSet<_>> = HashMap::default();
-    tree.iter().for_each(|edge| {
-        adjacency_map.entry(edge[0]).or_default().insert(edge[1]);
-        adjacency_map.entry(edge[1]).or_default().insert(edge[0]);
-    });
+    {
+        let vertex_to_index = vertices
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, vertex)| (vertex, i))
+            .collect::<HashMap<_, _>>();
+        tree.iter().for_each(|edge| {
+            adjacency_map
+                .entry(vertex_to_index[&edge[0]])
+                .or_default()
+                .insert(vertex_to_index[&edge[1]]);
+            adjacency_map
+                .entry(vertex_to_index[&edge[1]])
+                .or_default()
+                .insert(vertex_to_index[&edge[0]]);
+        });
+    }
 
-    let vertex_to_index = vertices
-        .iter()
-        .enumerate()
-        .map(|(i, vertex)| (*vertex, i))
-        .collect::<HashMap<_, _>>();
     let mut branch_list = adjacency_map
         .iter()
         .filter(|(_, adjacencies)| adjacencies.len() >= 3)
         .flat_map(|(branch, adjacencies)| {
             adjacencies
                 .iter()
-                .map(move |adjacency| Edge([*branch, *adjacency]))
+                .map(move |adjacency| (*branch, *adjacency))
         })
         .collect::<Vec<_>>();
-    branch_list.sort();
+    branch_list.sort_by_key(|(branch, adjacency)| {
+        Edge([vertices[*branch], vertices[*adjacency]])
+    });
 
-    while let Some(Edge([branch, disconnected_node])) = branch_list.pop() {
+    while let Some((branch, disconnected_node)) = branch_list.pop() {
         dbg!(branch_list.len());
         // No longer a branch
         if adjacency_map[&branch].len() <= 2 {
@@ -129,15 +140,14 @@ fn approximate_tsp_with_mst_greedy<
         let mut disconnected_tree_visited = BitVec::<u8, Msb0>::repeat(false, vertices.len());
         {
             *disconnected_tree_visited
-                .get_mut(vertex_to_index[&disconnected_node])
+                .get_mut(disconnected_node)
                 .unwrap() = true;
-            let mut dfs = vec![&disconnected_node];
+            let mut dfs = vec![disconnected_node];
             while let Some(head) = dfs.pop() {
-                for adjacency in &adjacency_map[head] {
-                    let adjacency_idx = vertex_to_index[adjacency];
-                    if !disconnected_tree_visited[adjacency_idx] {
-                        *disconnected_tree_visited.get_mut(adjacency_idx).unwrap() = true;
-                        dfs.push(adjacency);
+                for adjacency in &adjacency_map[&head] {
+                    if !disconnected_tree_visited[*adjacency] {
+                        *disconnected_tree_visited.get_mut(*adjacency).unwrap() = true;
+                        dfs.push(*adjacency);
                     }
                 }
             }
@@ -147,7 +157,7 @@ fn approximate_tsp_with_mst_greedy<
         // Pick the shortest possible link between two leaves that would reconnect the trees
 
         let (disconnected_tree_leaves, branch_tree_leaves) = (0..vertices.len())
-            .filter(|i| adjacency_map[&vertices[*i]].len() <= 1)
+            .filter(|i| adjacency_map[i].len() <= 1)
             .partition::<Vec<_>, _>(|i| disconnected_tree_visited[*i]);
 
         let (disconnected_tree_leaf, branch_tree_leaf) = disconnected_tree_leaves
@@ -163,13 +173,13 @@ fn approximate_tsp_with_mst_greedy<
 
         // Connect leaves
         adjacency_map
-            .get_mut(&vertices[branch_tree_leaf])
+            .get_mut(&branch_tree_leaf)
             .unwrap()
-            .insert(vertices[disconnected_tree_leaf]);
+            .insert(disconnected_tree_leaf);
         adjacency_map
-            .get_mut(&vertices[disconnected_tree_leaf])
+            .get_mut(&disconnected_tree_leaf)
             .unwrap()
-            .insert(vertices[branch_tree_leaf]);
+            .insert(branch_tree_leaf);
     }
 
     // Extract path from the adjacency list
@@ -193,7 +203,7 @@ fn approximate_tsp_with_mst_greedy<
         path.push(*next_vertex);
     }
 
-    path
+    path.into_iter().map(|i| vertices[i]).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
