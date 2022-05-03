@@ -1,9 +1,11 @@
 use std::fmt::Debug;
+use std::hash::Hash;
 
 use log::warn;
 use lyon_geom::{point, vector, Angle, Line, LineSegment, Point, Vector};
 use ndarray::{par_azip, prelude::*};
 use num_traits::{FromPrimitive, PrimInt, Signed};
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::{abs_distance_squared, get_slice_info_for_offset};
 
@@ -31,8 +33,9 @@ where
 /// 1D site (line segment)
 impl<T> Site<T> for LineSegment<f64>
 where
-    T: PrimInt + FromPrimitive + Debug,
+    T: PrimInt + FromPrimitive + Debug + Hash,
 {
+    /// Straight line distance from p to the closest point on the line
     fn dist(&self, p: [T; 2]) -> f64 {
         let p = point(p[0].to_f64().unwrap(), p[1].to_f64().unwrap());
         let square_length = self.to_vector().square_length();
@@ -45,8 +48,9 @@ where
         (p - self.sample(t)).square_length()
     }
 
+    /// All integer points close to the line
     fn seeds(&self, width: usize, height: usize) -> Vec<[T; 2]> {
-        let mut seeds = vec![];
+        let mut seeds = HashSet::default();
 
         let width = (width - 1) as f64;
         let height = (height - 1) as f64;
@@ -56,8 +60,8 @@ where
             let end_x = self.from.x.max(self.to.x).ceil().clamp(0., width);
             let mut x = start_x;
             while x < end_x {
-                let y = self.solve_y_for_x(x).clamp(0., height);
-                seeds.push([T::from_f64(x).unwrap(), T::from_f64(y.round()).unwrap()]);
+                let y = self.solve_y_for_x(x).round().clamp(0., height);
+                seeds.insert([T::from_f64(x).unwrap(), T::from_f64(y).unwrap()]);
                 x += 1.;
             }
         }
@@ -66,13 +70,13 @@ where
             let end_y = self.from.y.max(self.to.y).ceil().clamp(0., height);
             let mut y = start_y;
             while y < end_y {
-                let x = self.solve_x_for_y(y).clamp(0., width);
-                seeds.push([T::from_f64(x).unwrap(), T::from_f64(y.round()).unwrap()]);
+                let x = self.solve_x_for_y(y).round().clamp(0., width);
+                seeds.insert([T::from_f64(x).unwrap(), T::from_f64(y).unwrap()]);
                 y += 1.;
             }
         }
 
-        seeds
+        seeds.into_iter().collect()
     }
 }
 
