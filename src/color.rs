@@ -27,9 +27,9 @@ impl Display for Color {
         write!(
             f,
             "#{:02x}{:02x}{:02x}",
-            (self[0] * 256.) as u8,
-            (self[1] * 256.) as u8,
-            (self[2] * 256.) as u8
+            (self[0] * 255.).round() as u8,
+            (self[1] * 255.).round() as u8,
+            (self[2] * 255.).round() as u8
         )
     }
 }
