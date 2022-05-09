@@ -9,7 +9,7 @@ use crate::{
 };
 use cairo::{Context, Matrix};
 use log::{debug, warn};
-use lyon_geom::point;
+use lyon_geom::{point, Point};
 use ndarray::prelude::*;
 use spade::delaunay::IntDelaunayTriangulation;
 
@@ -39,17 +39,21 @@ pub fn render_fdog_based(
 }
 
 /// Run Weighted Linde-Buzo-Gray Stippling and customize the output according to the desired style.
+///
+/// TODO: implement is assumed to be circular, can this support non-circular implements?
+///
+/// <http://graphics.uni-konstanz.de/publikationen/Deussen2017LindeBuzoGray/WeightedLindeBuzoGrayStippling_authorversion.pdf>
 pub fn render_stipple_based(
     image: ArrayView2<f64>,
     super_sample: usize,
-    instrument_diameter_in_pixels: f64,
+    implement_diameter_in_pixels: f64,
     style: Style,
     ctx: &Context,
     matrix: Matrix,
 ) {
     let (width, height) = image.dim();
 
-    let stipple_area = (instrument_diameter_in_pixels / 2.).powi(2) * std::f64::consts::PI;
+    let stipple_area = (implement_diameter_in_pixels / 2.).powi(2) * std::f64::consts::PI;
 
     let mut voronoi_sites = vec![[(width / 2) as i64, (height / 2) as i64]];
 
@@ -75,17 +79,18 @@ pub fn render_stipple_based(
             let cell_properties = calculate_cell_properties(image.view(), points);
             let moments = cell_properties.moments;
 
-            if !(moments.density > f64::EPSILON) {
+            // Density is very low, remove this point early
+            if moments.m00 <= f64::EPSILON {
                 changed = true;
                 continue;
             }
             let centroid = cell_properties.centroid.unwrap();
 
-            let scaled_density = moments.density / super_sample.pow(2) as f64;
+            let scaled_density = moments.m00 / super_sample.pow(2) as f64;
 
             let line_area = stipple_area;
 
-            let zero = point(0., 0.);
+            let zero = Point::zero();
             let upper_bound = point((width - 1) as f64, (height - 1) as f64);
 
             if scaled_density < remove_threshold * line_area {
@@ -169,7 +174,7 @@ pub fn render_stipple_based(
                 ctx.arc(
                     site[0] as f64,
                     site[1] as f64,
-                    instrument_diameter_in_pixels / 2.0,
+                    implement_diameter_in_pixels / 2.0,
                     0.,
                     std::f64::consts::TAU,
                 );

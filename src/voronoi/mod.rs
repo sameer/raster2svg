@@ -1,8 +1,9 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Write};
 use std::hash::Hash;
 
+use crate::kbn_summation;
 use log::warn;
-use lyon_geom::{point, vector, Angle, Line, LineSegment, Point, Vector};
+use lyon_geom::{euclid::Vector2D, point, Angle, Line, LineSegment, Point, Vector};
 use ndarray::{par_azip, prelude::*};
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rustc_hash::FxHashSet as HashSet;
@@ -84,8 +85,13 @@ where
 /// return the assignment of coordinates in that box to their nearest neighbor
 /// using the Jump Flooding Algorithm.
 ///
-/// <https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf>
-pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitive + Debug>(
+/// Colorless cells will be usize::MAX
+///
+/// Specifically, this is described in <https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf>
+pub fn jump_flooding_voronoi<
+    S: Site<T> + Send + Sync,
+    T: PrimInt + FromPrimitive + Debug + Send + Sync,
+>(
     sites: &[S],
     width: usize,
     height: usize,
@@ -96,24 +102,37 @@ pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitiv
     if sites.is_empty() {
         return grid;
     }
+
+    // Prime JFA with seeds
     sites.iter().enumerate().for_each(|(color, site)| {
         for seed in site.seeds(width, height) {
             grid[[seed[0].to_usize().unwrap(), seed[1].to_usize().unwrap()]] = color;
         }
     });
 
-    let positions = Array::from_iter((0..width).flat_map(|x| (0..height).map(move |y| [x, y])))
-        .into_shape((width, height))
-        .unwrap();
+    // Needed to parallelize JFA
+    let positions = Array::from_iter((0..width).flat_map(|x| {
+        (0..height).map(move |y| [T::from_usize(x).unwrap(), T::from_usize(y).unwrap()])
+    }))
+    .into_shape((width, height))
+    .unwrap();
 
     let mut scratchpad = grid.clone();
 
+    // First round is of size n/2 where n is a power of 2
     let mut round_step = (width.max(height))
         .checked_next_power_of_two()
         .map(|x| x / 2)
         .unwrap_or_else(|| (width.max(height) / 2).next_power_of_two());
 
     while round_step != 0 {
+        // Each grid point passes its contents on to (x+i, y+j) where i,j in {-round_step, 0, round_step}
+
+        // This might look a bit weird... but it's JFA in parallel.
+        // For each i,j it runs the jump on the entire image at once
+        //
+        // This works because JFA is linear:
+        // If x,y will propagate to x+k,y+k, then x+1,y+1 will propagate to x+1+k,y+1+k
         for y_dir in -1..=1 {
             for x_dir in -1..=1 {
                 let center_slice_info = get_slice_info_for_offset(
@@ -124,10 +143,15 @@ pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitiv
                     get_slice_info_for_offset(x_dir * round_step as i32, y_dir * round_step as i32);
                 par_azip! {
                     (dest in scratchpad.slice_mut(center_slice_info), sample in grid.slice(kernel_slice_info), here in positions.slice(center_slice_info)) {
-                        let here = [T::from_usize(here[0]).unwrap(), T::from_usize(here[1]).unwrap()];
-                        if *sample != usize::MAX && (*dest == usize::MAX || sites[*sample].dist(here) < sites[*dest].dist(here)) {
-                            *dest = *sample;
-                        }
+                        *dest =if *dest == usize::MAX {
+                            *sample
+                        } else if *sample == usize::MAX {
+                            *dest
+                        } else if sites[*sample].dist(*here) < sites[*dest].dist(*here) {
+                            *sample
+                        } else {
+                            *dest
+                        };
                     }
                 };
                 grid.assign(&scratchpad);
@@ -140,6 +164,7 @@ pub fn jump_flooding_voronoi<S: Site<T> + Send + Sync, T: PrimInt + FromPrimitiv
     grid
 }
 
+/// Converts a JFA-assigned color grid into a list of points assigned to each site
 pub fn colors_to_assignments<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
     sites: &[S],
     grid: ArrayView2<usize>,
@@ -155,139 +180,206 @@ pub fn colors_to_assignments<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
     sites_to_points
 }
 
+/// First and second order moments of a Voronoi cell
 #[derive(Default, Debug)]
 pub struct Moments {
-    pub density: f64,
-    pub x: f64,
-    pub y: f64,
-    pub xx: f64,
-    pub xy: f64,
-    pub yy: f64,
+    /// Sum of the values of points in the cell
+    pub m00: f64,
+    /// First order x moment
+    pub m10: f64,
+    /// First order y moment
+    pub m01: f64,
+    /// Second order xx central moment
+    pub μ20: f64,
+    /// Second order yy central moment
+    pub μ02: f64,
+    /// Second order xy central moment
+    pub μ11: f64,
+    /// Calculated centroid, may be `NaN`
+    centroid: Point<f64>,
 }
 
+/// Hiller et al. Section 4 + Appendix B
+#[inline]
 fn calculate_moments<T: PrimInt>(image: ArrayView2<f64>, points: &[[T; 2]]) -> Moments {
     let mut moments = Moments::default();
-    for point in points {
-        let x = point[0].to_usize().unwrap();
-        let y = point[1].to_usize().unwrap();
-        let density = image[[x, y]];
-        let x = x as f64;
-        let y = y as f64;
-        moments.density += density;
-        moments.x += x * density;
-        moments.y += y * density;
-        moments.xx += x.powi(2) * density;
-        moments.xy += x * y * density;
-        moments.yy += y.powi(2) * density;
+    kbn_summation! {
+        for [x, y] in points => {
+            'loop: {
+                let x = x.to_usize().unwrap();
+                let y = y.to_usize().unwrap();
+                let value = image[[x, y]];
+                let x = x as f64;
+                let y = y as f64;
+            }
+            m00 += value;
+            m10 += x * value;
+            m01 += y * value;
+        }
     }
+    moments.m00 = m00;
+    moments.m10 = m10;
+    moments.m01 = m01;
+
+    // Hiller et al. Appendix B mass centroid
+    let centroid = point(moments.m10 / moments.m00, moments.m01 / moments.m00);
+    moments.centroid = centroid;
+
+    // Hiller et al. Appendix B central moments
+    kbn_summation! {
+        for [x, y] in points => {
+            'loop: {
+                let x = x.to_usize().unwrap();
+                let y = y.to_usize().unwrap();
+                let value = image[[x, y]];
+                let x = x as f64;
+                let y = y as f64;
+            }
+            μ20 += (x - centroid.x).powi(2) * value;
+            μ02 += (y - centroid.y).powi(2) * value;
+            μ11 += (x - centroid.x) * (y - centroid.y) * value;
+        }
+    }
+    moments.μ20 = μ20;
+    moments.μ02 = μ02;
+    moments.μ11 = μ11;
+
     moments
 }
 
+/// Deussen et al 3.3 Beyond Stippling
 #[derive(Default, Debug)]
 pub struct CellProperties<T: PrimInt + Debug + Default> {
     pub moments: Moments,
+    /// Density-based center of the cell
     pub centroid: Option<Point<f64>>,
+    /// Orientation of cell's inertial axis
     pub phi_vector: Option<Vector<f64>>,
+    /// Convex hull enclosing the cell
     pub hull: Option<Vec<[T; 2]>>,
+    /// Used to determine the splitting direction
     pub phi_oriented_segment_through_centroid: Option<LineSegment<f64>>,
 }
 
-pub fn calculate_cell_properties<T: PrimInt + Debug + Default>(
+pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
     image: ArrayView2<f64>,
     points: &[[T; 2]],
 ) -> CellProperties<T> {
-    let moments = calculate_moments(image, points);
+    let mut cell_properties = CellProperties {
+        moments: calculate_moments(image, points),
+        ..Default::default()
+    };
 
-    let mut cell_properties = CellProperties::default();
+    let moments = &cell_properties.moments;
 
-    if moments.density > f64::EPSILON {
-        let centroid = point(
-            (moments.x / moments.density) as f64,
-            (moments.y / moments.density) as f64,
-        );
-        cell_properties.centroid = Some(centroid);
-
-        let x = moments.xx / moments.density - (moments.x / moments.density).powi(2);
-        let y = moments.xy / moments.density - (moments.x * moments.y / moments.density.powi(2));
-        let z = moments.yy / moments.density - (moments.y / moments.density).powi(2);
-        let phi = Angle::radians(0.5 * (2.0 * y).atan2(x - z));
-        let (sin, cos) = phi.sin_cos();
-        let phi_vector = vector(cos, sin);
-        cell_properties.phi_vector = Some(phi_vector);
-
-        const HULL_EPSILON: f64 = 1E-4;
-
-        if points.len() >= 3 {
-            let hull = hull::convex_hull(points);
-            // Hull may not be valid if points were collinear, or the centroid may lie directly on a vertex
-            if hull.len() >= 3
-                && !hull.iter().any(|vertex| {
-                    (centroid.x - vertex[0].to_f64().unwrap()).abs() < HULL_EPSILON
-                        && (centroid.y - vertex[1].to_f64().unwrap()).abs() < HULL_EPSILON
-                })
-                && !hull
-                    .iter()
-                    .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-                    .any(|(from, to)| {
-                        let edge = LineSegment {
-                            from: point(from[0].to_f64().unwrap(), from[1].to_f64().unwrap()),
-                            to: point(to[0].to_f64().unwrap(), to[1].to_f64().unwrap()),
-                        };
-                        let x = edge.solve_x_for_y(centroid.y);
-                        let y = edge.solve_y_for_x(centroid.x);
-                        (x - centroid.x).abs() < HULL_EPSILON
-                            && (y - centroid.y).abs() < HULL_EPSILON
-                    })
-            {
-                let mut edge_vectors = hull
-                    .iter()
-                    .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-                    .filter_map(|(from, to)| {
-                        let edge = LineSegment {
-                            from: point(from[0].to_f64().unwrap(), from[1].to_f64().unwrap()),
-                            to: point(to[0].to_f64().unwrap(), to[1].to_f64().unwrap()),
-                        };
-
-                        edge.line_intersection(&Line {
-                            point: centroid,
-                            vector: phi_vector,
-                        })
-                        .map(|intersection| LineSegment {
-                            from: centroid,
-                            to: intersection,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                // Resolves the issue of hull vertex intersections and floating point inaccuracy
-                edge_vectors.sort_by(|a, b| {
-                    a.to.x
-                        .partial_cmp(&b.to.x)
-                        .unwrap()
-                        .then(a.to.y.partial_cmp(&b.to.y).unwrap())
-                });
-                edge_vectors.dedup_by(|a, b| (a.to - b.to).length() < HULL_EPSILON);
-
-                if edge_vectors.len() != 2 {
-                    warn!("It should be impossible for this line to intersect the hull at {} edges: {:?} {:?} {:?} {:?} {:?}", edge_vectors.len(), &edge_vectors, &hull, centroid, phi_vector, moments);
-                } else if let [left, right] = edge_vectors.as_slice() {
-                    cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
-                        from: left.to,
-                        to: right.to,
-                    });
-                }
-            }
-
-            cell_properties.hull = Some(hull);
-        } else {
-            let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
-            cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
-                from: centroid + phi_vector * radius,
-                to: centroid - phi_vector * radius,
-            });
-        };
+    // Any calculation here is pointless
+    if moments.m00 <= f64::EPSILON {
+        return cell_properties;
     }
-    cell_properties.moments = moments;
+    let centroid = moments.centroid;
+    cell_properties.centroid = Some(moments.centroid);
+
+    // Hiller et al. Appendix B Equation 5
+    let phi = Angle::radians(0.5 * (2.0 * moments.μ11).atan2(moments.μ20 - moments.μ02));
+    let phi_vector = Vector2D::from_angle_and_length(phi, 1.);
+    cell_properties.phi_vector = Some(phi_vector);
+
+    const HULL_EPSILON: f64 = 1E-4;
+
+    if points.len() >= 3 {
+        let hull = hull::convex_hull(points);
+
+        let edges_it = hull
+            .iter()
+            .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
+            .map(|(from, to)| LineSegment {
+                from: point(from[0].to_f64().unwrap(), from[1].to_f64().unwrap()),
+                to: point(to[0].to_f64().unwrap(), to[1].to_f64().unwrap()),
+            });
+        // Hull may not be valid if: points were colinear
+        if hull.len() >= 3 {
+            let mut edges_intersecting_phi_line = edges_it
+                .filter_map(|edge| {
+                    edge.line_intersection(&Line {
+                        point: centroid,
+                        vector: phi_vector,
+                    })
+                    .map(|intersection| LineSegment {
+                        from: centroid,
+                        to: intersection,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            // We may see more than 2 intersections if:
+            // * Phi line intersects voronoi cell at a vertex, thus intersecting two edges of its hull
+            // * Floating point accuracy problems
+            edges_intersecting_phi_line.sort_by(|a, b| {
+                a.to.x
+                    .partial_cmp(&b.to.x)
+                    .unwrap()
+                    .then(a.to.y.partial_cmp(&b.to.y).unwrap())
+            });
+            edges_intersecting_phi_line.dedup_by(|a, b| (a.to - b.to).length() < HULL_EPSILON);
+
+            if edges_intersecting_phi_line.len() != 2 {
+                warn!(
+                    "It should be impossible for this line to intersect the hull at {} edges:\n{}",
+                    edges_intersecting_phi_line.len(),
+                    {
+                        // &edges_intersecting_phi_line, &hull, phi_vector, moments;
+                        let mut path = String::new();
+                        if let Some(point) = hull.first() {
+                            write!(path, "M{:?},{:?} ", point[0], point[1]).unwrap();
+                        }
+                        if hull.len() >= 2 {
+                            path += "L";
+                        }
+                        for point in hull.iter().skip(1) {
+                            write!(path, "{:?},{:?} ", point[0], point[1]).unwrap();
+                        }
+                        if hull.len() >= 3 {
+                            path += "Z";
+                        }
+
+                        let [cx, cy] = centroid.to_array();
+                        let [px, py] = (centroid + phi_vector * 5.).to_array();
+                        let mut maxx = cx.max(px);
+                        let mut maxy = cy.max(py);
+                        for point in &hull {
+                            maxx = maxx.max(point[0].to_usize().unwrap() as f64);
+                            maxy = maxy.max(point[1].to_usize().unwrap() as f64);
+                        }
+                        maxx += 2.;
+                        maxy += 2.;
+
+                        format!(
+                            r#"
+                        <?xml version="1.0" encoding="UTF-8"?>
+                        <svg fill-opacity="0" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{maxx}mm" height="{maxy}mm" viewBox="0 0 {maxx} {maxy}" version="1.1">
+                        <path stroke="black" d="{path}"/>
+                        <path stroke="green" d="M{cx},{cy} L{px},{py}"/>
+                        <circle stroke="red" cx="{cx}" cy="{cy}" r="0.5"/>
+                        "#,
+                        )
+                    }
+                );
+            } else if let [left, right] = edges_intersecting_phi_line.as_slice() {
+                cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
+                    from: left.to,
+                    to: right.to,
+                });
+            }
+        }
+
+        cell_properties.hull = Some(hull);
+    } else {
+        let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
+        cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
+            from: centroid + phi_vector * radius,
+            to: centroid - phi_vector * radius,
+        });
+    };
 
     cell_properties
 }

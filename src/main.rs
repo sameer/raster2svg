@@ -29,6 +29,8 @@ mod filter;
 mod graph;
 /// Line segment drawing and related algorithms
 mod lsd;
+/// Pure math routines
+mod math;
 /// Routines for creating the final SVG using [Cairo](cairographics.org)
 mod render;
 /// Construct the [Voronoi diagram](https://en.wikipedia.org/wiki/Voronoi_diagram) and calculate related properties
@@ -261,38 +263,128 @@ fn main() -> io::Result<()> {
     match opt.color_model {
         ColorModel::Hsl => {
             let (_, width, height) = image_in_hsl.dim();
+            let colors_in_hsl = colors
+                .iter()
+                .map(|c| nd_to_a::<3>(srgb_to_hsl(a_to_nd(c.as_ref()).view())))
+                .collect::<Vec<_>>();
+            let color_hue_vectors = colors_in_hsl
+                .iter()
+                .map(|color_hsl| {
+                    let (sin, cos) = color_hsl[0].sin_cos();
+                    vector(cos, sin) * color_hsl[1]
+                })
+                .collect::<Vec<_>>();
             for x in 0..width {
                 for y in 0..height {
                     let hsl = image_in_hsl.slice(s![.., x, y]);
                     let (sin, cos) = hsl[0].sin_cos();
+                    // Direction of hue with magnitude of saturation
                     let image_hue_vector: Vector<_> = vector(cos, sin) * hsl[1];
-                    for (i, c) in colors.iter().enumerate() {
-                        if c[0] < f64::EPSILON && c[1] < f64::EPSILON && c[2] < f64::EPSILON {
-                            image_in_implements[[i, x, y]] = 1. - hsl[2];
-                        } else {
-                            let color_hsl = nd_to_a::<3>(srgb_to_hsl(a_to_nd(c.as_ref()).view()));
-                            let (sin, cos) = color_hsl[0].sin_cos();
-                            let color_hue_vector = vector(cos, sin) * color_hsl[1];
 
-                            image_in_implements[[i, x, y]] =
-                                // Can't blend colors, this color is useless
-                                if image_hue_vector.angle_to(color_hue_vector).radians.abs()
-                                    > std::f64::consts::FRAC_PI_2
-                                {
-                                    0.0
-                                } else {
-                                    image_hue_vector
-                                        .project_onto_vector(color_hue_vector)
-                                        .length()
-                                        // Can't increase saturation beyond the max
-                                        .min(color_hsl[1])
-                                };
+                    let left = color_hue_vectors
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| {
+                            !colors[*i]
+                                .as_ref()
+                                .iter()
+                                .all(|channel| *channel < f64::EPSILON)
+                        })
+                        .filter(|(_, color_hue_vector)| {
+                            let angle = image_hue_vector.angle_to(**color_hue_vector).radians;
+                            angle.is_sign_negative() && angle.abs() < std::f64::consts::FRAC_PI_2
+                        })
+                        .max_by(|(_, color_hue_vector_i), (_, color_hue_vector_j)| {
+                            image_hue_vector
+                                .project_onto_vector(**color_hue_vector_i)
+                                .length()
+                                .partial_cmp(
+                                    &image_hue_vector
+                                        .project_onto_vector(**color_hue_vector_j)
+                                        .length(),
+                                )
+                                .unwrap()
+                        });
+
+                    let right = color_hue_vectors
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| {
+                            !colors[*i]
+                                .as_ref()
+                                .iter()
+                                .all(|channel| *channel < f64::EPSILON)
+                        })
+                        .filter(|(_, color_hue_vector)| {
+                            let angle = image_hue_vector.angle_to(**color_hue_vector).radians;
+                            angle.is_sign_positive() && angle.abs() < std::f64::consts::FRAC_PI_2
+                        })
+                        .max_by(|(_, color_hue_vector_i), (_, color_hue_vector_j)| {
+                            image_hue_vector
+                                .project_onto_vector(**color_hue_vector_i)
+                                .length()
+                                .partial_cmp(
+                                    &image_hue_vector
+                                        .project_onto_vector(**color_hue_vector_j)
+                                        .length(),
+                                )
+                                .unwrap()
+                        });
+
+                    match (left, right) {
+                        (Some((i, color_hue_vector_i)), Some((j, color_hue_vector_j))) => {
+                            image_in_implements[[i, x, y]] = image_hue_vector
+                                .project_onto_vector(*color_hue_vector_i)
+                                .length()
+                                // Can't increase saturation beyond the max
+                                .min(colors_in_hsl[i][1]);
+
+                            image_in_implements[[j, x, y]] = image_hue_vector
+                                .project_onto_vector(*color_hue_vector_j)
+                                .length()
+                                // Can't increase saturation beyond the max
+                                .min(colors_in_hsl[j][1]);
                         }
+                        (Some((i, color_hue_vector)), None)
+                        | (None, Some((i, color_hue_vector))) => {
+                            image_in_implements[[i, x, y]] = image_hue_vector
+                                .project_onto_vector(*color_hue_vector)
+                                .length()
+                                // Can't increase saturation beyond the max
+                                .min(colors_in_hsl[i][1]);
+                        }
+                        (None, None) => {}
                     }
+                    // for (i, (c, (color_hsl, color_hue_vector))) in colors
+                    //     .iter()
+                    //     .zip(colors_in_hsl.iter().zip(color_hue_vectors.iter()))
+                    //     .enumerate()
+                    // {
+                    //     // Black = lightness
+                    //     if c.as_ref().iter().all(|channel| *channel < f64::EPSILON) {
+                    //         image_in_implements[[i, x, y]] = 1. - hsl[2];
+                    //     } else {
+                    //         image_in_implements[[i, x, y]] =
+                    //             // Can't blend colors, this color is useless
+                    //             if image_hue_vector.angle_to(*color_hue_vector).radians.abs()
+                    //                 > std::f64::consts::FRAC_PI_2
+                    //             {
+                    //                 0.0
+                    //             } else {
+                    //                 image_hue_vector
+                    //                     .project_onto_vector(*color_hue_vector)
+                    //                     .length()
+                    //                     // Can't increase saturation beyond the max
+                    //                     .min(color_hsl[1])
+                    //             };
+                    //     }
+                    // }
                 }
             }
         }
-        ColorModel::Cielab => {}
+        ColorModel::Cielab => {
+            todo!();
+        }
     }
 
     // pen_image
