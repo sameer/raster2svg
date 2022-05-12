@@ -59,7 +59,7 @@ pub fn render_stipple_based(
 
     let initial_hysteresis = 0.6;
     let hysteresis_delta = 0.01;
-    for iteration in 0..50 {
+    for iteration in 0..140 {
         if voronoi_sites.is_empty() {
             break;
         }
