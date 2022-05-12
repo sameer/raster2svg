@@ -1,8 +1,9 @@
-use std::fmt::{Debug, Write};
+use std::fmt::Debug;
 use std::hash::Hash;
+use std::io::Write;
 
 use crate::kbn_summation;
-use log::warn;
+use log::{info, warn};
 use lyon_geom::{euclid::Vector2D, point, Angle, Line, LineSegment, Point, Vector};
 use ndarray::{par_azip, prelude::*};
 use num_traits::{FromPrimitive, PrimInt, Signed};
@@ -284,7 +285,7 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
     let phi_vector = Vector2D::from_angle_and_length(phi, 1.);
     cell_properties.phi_vector = Some(phi_vector);
 
-    const HULL_EPSILON: f64 = 1E-4;
+    const HULL_EPSILON: f64 = 1E-8;
 
     if points.len() >= 3 {
         let hull = hull::convex_hull(points);
@@ -298,16 +299,18 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
             });
         // Hull may not be valid if: points were colinear
         if hull.len() >= 3 {
+            let phi_line = Line {
+                point: centroid,
+                vector: phi_vector,
+            };
             let mut edges_intersecting_phi_line = edges_it
+                .clone()
                 .filter_map(|edge| {
-                    edge.line_intersection(&Line {
-                        point: centroid,
-                        vector: phi_vector,
-                    })
-                    .map(|intersection| LineSegment {
-                        from: centroid,
-                        to: intersection,
-                    })
+                    edge.line_intersection(&phi_line)
+                        .map(|intersection| LineSegment {
+                            from: centroid,
+                            to: intersection,
+                        })
                 })
                 .collect::<Vec<_>>();
 
@@ -322,54 +325,45 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
             });
             edges_intersecting_phi_line.dedup_by(|a, b| (a.to - b.to).length() < HULL_EPSILON);
 
-            if edges_intersecting_phi_line.len() != 2 {
-                warn!(
-                    "It should be impossible for this line to intersect the hull at {} edges:\n{}",
-                    edges_intersecting_phi_line.len(),
-                    {
-                        // &edges_intersecting_phi_line, &hull, phi_vector, moments;
-                        let mut path = String::new();
-                        if let Some(point) = hull.first() {
-                            write!(path, "M{:?},{:?} ", point[0], point[1]).unwrap();
-                        }
-                        if hull.len() >= 2 {
-                            path += "L";
-                        }
-                        for point in hull.iter().skip(1) {
-                            write!(path, "{:?},{:?} ", point[0], point[1]).unwrap();
-                        }
-                        if hull.len() >= 3 {
-                            path += "Z";
-                        }
+            let phi_oriented_segment_through_centroid = match edges_intersecting_phi_line.as_slice()
+            {
+                // Degenerate case: centroid on edge with phi line parallel to the edge
+                [] => {
+                    let overlap = edges_it
+                        .clone()
+                        .min_by(|edge_a, edge_b| {
+                            edge_a
+                                .to_line()
+                                .distance_to_point(&centroid)
+                                .partial_cmp(&edge_b.to_line().distance_to_point(&centroid))
+                                .unwrap()
+                        })
+                        .unwrap();
 
-                        let [cx, cy] = centroid.to_array();
-                        let [px, py] = (centroid + phi_vector * 5.).to_array();
-                        let mut maxx = cx.max(px);
-                        let mut maxy = cy.max(py);
-                        for point in &hull {
-                            maxx = maxx.max(point[0].to_usize().unwrap() as f64);
-                            maxy = maxy.max(point[1].to_usize().unwrap() as f64);
-                        }
-                        maxx += 2.;
-                        maxy += 2.;
-
-                        format!(
-                            r#"
-                        <?xml version="1.0" encoding="UTF-8"?>
-                        <svg fill-opacity="0" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{maxx}mm" height="{maxy}mm" viewBox="0 0 {maxx} {maxy}" version="1.1">
-                        <path stroke="black" d="{path}"/>
-                        <path stroke="green" d="M{cx},{cy} L{px},{py}"/>
-                        <circle stroke="red" cx="{cx}" cy="{cy}" r="0.5"/>
-                        "#,
-                        )
+                    let dist = overlap.to_line().distance_to_point(&centroid);
+                    #[cfg(debug_assertions)]
+                    if dist > HULL_EPSILON {
+                        to_svg(&hull, centroid, phi_vector, &edges_intersecting_phi_line);
                     }
-                );
-            } else if let [left, right] = edges_intersecting_phi_line.as_slice() {
-                cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
+                    overlap
+                },
+                // Degenerate case: centroid on vertex of cell with phi pointing out of the cell
+                [segment] => {
+                    debug_assert!(
+                        segment.length() < HULL_EPSILON,
+                        "Length is expected to be 0 for this degenerate case: {:?}",
+                        segment
+                    );
+                    *segment
+                }
+                [left, right] => LineSegment {
                     from: left.to,
                     to: right.to,
-                });
-            }
+                },
+                other => unreachable!("Should not be possible for a line to intersect a convex polygon at more than 2 edges: {:?}", other),
+            };
+            cell_properties.phi_oriented_segment_through_centroid =
+                Some(phi_oriented_segment_through_centroid);
         }
 
         cell_properties.hull = Some(hull);
@@ -382,6 +376,75 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
     };
 
     cell_properties
+}
+
+fn to_svg<T: PrimInt + Debug>(
+    hull: &[[T; 2]],
+    centroid: Point<f64>,
+    phi_vector: Vector<f64>,
+    edges_intersecting_phi_line: &[LineSegment<f64>],
+) {
+    let mut path = String::new();
+    if let Some(point) = hull.first() {
+        path += &format!("M{:?},{:?} ", point[0], point[1]);
+    }
+    if hull.len() >= 2 {
+        path += "L";
+    }
+    for point in hull.iter().skip(1) {
+        path += &format!("{:?},{:?} ", point[0], point[1]);
+    }
+    if hull.len() >= 3 {
+        path += "Z";
+    }
+
+    let [cx, cy] = centroid.to_array();
+    let [p1x, p1y] = (centroid + phi_vector * -10.).to_array();
+    let [p2x, p2y] = (centroid + phi_vector * 10.).to_array();
+    let mut minx = p1x.min(p2x);
+    let mut miny = p1y.min(p2y);
+    let mut maxx = p1x.max(p2x);
+    let mut maxy = p1y.max(p2y);
+    for point in hull {
+        maxx = maxx.max(point[0].to_usize().unwrap() as f64);
+        maxy = maxy.max(point[1].to_usize().unwrap() as f64);
+        minx = minx.min(point[0].to_usize().unwrap() as f64);
+        miny = miny.min(point[1].to_usize().unwrap() as f64);
+    }
+    minx -= 2.;
+    miny -= 2.;
+    maxx += 2.;
+    maxy += 2.;
+    let mut f =
+        std::fs::File::create(format!("/tmp/foo{},{}.svg", centroid.x, centroid.y)).unwrap();
+    info!(
+        "This is weird /tmp/foo{},{}.svg {}",
+        centroid.x,
+        centroid.y,
+        edges_intersecting_phi_line.len()
+    );
+    let mut edges = String::default();
+    for LineSegment {
+        from: Point {
+            x: fromx, y: fromy, ..
+        },
+        to: Point { x: tox, y: toy, .. },
+    } in edges_intersecting_phi_line
+    {
+        edges += &format!(r#"<path stroke="blue" d="M{fromx},{fromy}L{tox},{toy}"/>"#);
+    }
+    let width = maxx - minx;
+    let height = maxy - miny;
+    write!(
+        f,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<svg fill-opacity="0" stroke-width="0.5" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{width}mm" height="{height}mm" viewBox="{minx} {miny} {maxx} {maxy}" version="1.1">
+<path stroke="black" d="{path}"/>
+<path stroke="green" d="M{p1x},{p1y} L{p2x},{p2y}"/>
+{edges}
+<circle stroke="red" cx="{cx}" cy="{cy}" r="0.5"/>
+</svg>"#,
+    ).unwrap();
 }
 
 #[cfg(test)]
