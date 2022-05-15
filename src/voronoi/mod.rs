@@ -2,14 +2,13 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::io::Write;
 
-use crate::kbn_summation;
-use log::{info, warn};
+use log::info;
 use lyon_geom::{euclid::Vector2D, point, Angle, Line, LineSegment, Point, Vector};
 use ndarray::{par_azip, prelude::*};
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rustc_hash::FxHashSet as HashSet;
 
-use crate::{abs_distance_squared, get_slice_info_for_offset};
+use crate::{abs_distance_squared, get_slice_info_for_offset, kbn_summation};
 
 mod hull;
 
@@ -39,7 +38,7 @@ where
 {
     /// Straight line distance from p to the closest point on the line
     fn dist(&self, p: [T; 2]) -> f64 {
-        let p = point(p[0].to_f64().unwrap(), p[1].to_f64().unwrap());
+        let p = vertex_to_point(&p);
         let square_length = self.to_vector().square_length();
         if square_length.abs() <= f64::EPSILON {
             (p - self.from).square_length();
@@ -262,6 +261,7 @@ pub struct CellProperties<T: PrimInt + Debug + Default> {
     pub phi_oriented_segment_through_centroid: Option<LineSegment<f64>>,
 }
 
+/// Calculate properties of a Voronoi cell
 pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
     image: ArrayView2<f64>,
     points: &[[T; 2]],
@@ -289,84 +289,96 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
 
     if points.len() >= 3 {
         let hull = hull::convex_hull(points);
+        let vertex_it = hull.iter().map(vertex_to_point);
+        let edges_it = vertex_it
+            .clone()
+            .zip(vertex_it.clone().skip(1))
+            .chain(
+                hull.last()
+                    .filter(|_| hull.len() > 1)
+                    .map(vertex_to_point)
+                    .zip(hull.first().map(vertex_to_point)),
+            )
+            .map(|(from, to)| LineSegment { from, to });
 
-        let edges_it = hull
-            .iter()
-            .zip(hull.iter().skip(1).chain(hull.iter().take(1)))
-            .map(|(from, to)| LineSegment {
-                from: point(from[0].to_f64().unwrap(), from[1].to_f64().unwrap()),
-                to: point(to[0].to_f64().unwrap(), to[1].to_f64().unwrap()),
-            });
-        // Hull may not be valid if: points were colinear
+        // Hull may not be valid if the points are colinear
         if hull.len() >= 3 {
             let phi_line = Line {
                 point: centroid,
                 vector: phi_vector,
             };
-            let mut edges_intersecting_phi_line = edges_it
+
+            let centroid_is_vertex = vertex_it
                 .clone()
-                .filter_map(|edge| {
-                    edge.line_intersection(&phi_line)
-                        .map(|intersection| LineSegment {
-                            from: centroid,
-                            to: intersection,
-                        })
-                })
+                .any(|vertex| vertex.distance_to(centroid) < HULL_EPSILON);
+            let centroid_on_edge = edges_it
+                .clone()
+                .any(|edge| edge.to_line().distance_to_point(&centroid) < HULL_EPSILON);
+
+            let mut edge_intersections_with_phi_line = edges_it
+                .clone()
+                .filter_map(|edge| edge.line_intersection(&phi_line))
                 .collect::<Vec<_>>();
 
             // We may see more than 2 intersections if:
             // * Phi line intersects voronoi cell at a vertex, thus intersecting two edges of its hull
             // * Floating point accuracy problems
-            edges_intersecting_phi_line.sort_by(|a, b| {
-                a.to.x
-                    .partial_cmp(&b.to.x)
+            edge_intersections_with_phi_line.sort_by(|a, b| {
+                a.x.partial_cmp(&b.x)
                     .unwrap()
-                    .then(a.to.y.partial_cmp(&b.to.y).unwrap())
+                    .then(a.y.partial_cmp(&b.y).unwrap())
             });
-            edges_intersecting_phi_line.dedup_by(|a, b| (a.to - b.to).length() < HULL_EPSILON);
+            edge_intersections_with_phi_line.dedup_by(|a, b| a.distance_to(*b) < HULL_EPSILON);
 
-            let phi_oriented_segment_through_centroid = match edges_intersecting_phi_line.as_slice()
-            {
-                // Degenerate case: centroid on edge with phi line parallel to the edge
-                [] => {
-                    let overlap = edges_it
-                        .clone()
-                        .min_by(|edge_a, edge_b| {
-                            edge_a
-                                .to_line()
-                                .distance_to_point(&centroid)
-                                .partial_cmp(&edge_b.to_line().distance_to_point(&centroid))
-                                .unwrap()
-                        })
-                        .unwrap();
-
-                    let dist = overlap.to_line().distance_to_point(&centroid);
-                    #[cfg(debug_assertions)]
-                    if dist > HULL_EPSILON {
-                        to_svg(&hull, centroid, phi_vector, &edges_intersecting_phi_line);
+            cell_properties.phi_oriented_segment_through_centroid = Some(
+                match (
+                    centroid_is_vertex,
+                    centroid_on_edge,
+                    edge_intersections_with_phi_line.as_slice(),
+                ) {
+                    (_, _, [left, right]) => LineSegment {
+                        from: *left,
+                        to: *right,
+                    },
+                    (false, false, other) => {
+                        to_svg(&hull, centroid, phi_vector, other);
+                        unreachable!()
                     }
-                    overlap
+                    (true, false, other) => {
+                        to_svg(&hull, centroid, phi_vector, other);
+                        unreachable!()
+                    }
+                    (false, true, other) | (true, true, other) => {
+                        // Centroid is at a vertex or on an edge.
+                        // Try to expand the segment to maximal length.
+                        let mut vertices_on_phi_line = vertex_it
+                            .clone()
+                            .filter(|v| phi_line.distance_to_point(v) < HULL_EPSILON)
+                            .collect::<Vec<_>>();
+                        vertices_on_phi_line.sort_by(|a, b| {
+                            a.x.partial_cmp(&b.x)
+                                .unwrap()
+                                .then(a.y.partial_cmp(&b.y).unwrap())
+                        });
+                        match vertices_on_phi_line.as_slice() {
+                            [] => {
+                                to_svg(&hull, centroid, phi_vector, other);
+                                unreachable!()
+                            }
+                            [single] => LineSegment {
+                                from: *single,
+                                to: *single,
+                            },
+                            [first, .., last] => LineSegment {
+                                from: *first,
+                                to: *last,
+                            },
+                        }
+                    }
                 },
-                // Degenerate case: centroid on vertex of cell with phi pointing out of the cell
-                [segment] => {
-                    debug_assert!(
-                        segment.length() < HULL_EPSILON,
-                        "Length is expected to be 0 for this degenerate case: {:?}",
-                        segment
-                    );
-                    *segment
-                }
-                [left, right] => LineSegment {
-                    from: left.to,
-                    to: right.to,
-                },
-                other => unreachable!("Should not be possible for a line to intersect a convex polygon at more than 2 edges: {:?}", other),
-            };
-            cell_properties.phi_oriented_segment_through_centroid =
-                Some(phi_oriented_segment_through_centroid);
+            );
+            cell_properties.hull = Some(hull);
         }
-
-        cell_properties.hull = Some(hull);
     } else {
         let radius = (points.len() as f64 / std::f64::consts::PI).sqrt();
         cell_properties.phi_oriented_segment_through_centroid = Some(LineSegment {
@@ -378,11 +390,12 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
     cell_properties
 }
 
+/// Debugging function for visualizing [calculate_cell_properties]
 fn to_svg<T: PrimInt + Debug>(
     hull: &[[T; 2]],
     centroid: Point<f64>,
     phi_vector: Vector<f64>,
-    edges_intersecting_phi_line: &[LineSegment<f64>],
+    edge_intersections_with_phi_line: &[Point<f64>],
 ) {
     let mut path = String::new();
     if let Some(point) = hull.first() {
@@ -421,17 +434,11 @@ fn to_svg<T: PrimInt + Debug>(
         "This is weird /tmp/foo{},{}.svg {}",
         centroid.x,
         centroid.y,
-        edges_intersecting_phi_line.len()
+        edge_intersections_with_phi_line.len()
     );
-    let mut edges = String::default();
-    for LineSegment {
-        from: Point {
-            x: fromx, y: fromy, ..
-        },
-        to: Point { x: tox, y: toy, .. },
-    } in edges_intersecting_phi_line
-    {
-        edges += &format!(r#"<path stroke="blue" d="M{fromx},{fromy}L{tox},{toy}"/>"#);
+    let mut intersections = String::default();
+    for Point { x: tox, y: toy, .. } in edge_intersections_with_phi_line {
+        intersections += &format!(r#"<circle stroke="blue" cx="{tox}" cy="{toy}" r="0.5"/>"#);
     }
     let width = maxx - minx;
     let height = maxy - miny;
@@ -441,10 +448,15 @@ fn to_svg<T: PrimInt + Debug>(
 <svg fill-opacity="0" stroke-width="0.5" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{width}mm" height="{height}mm" viewBox="{minx} {miny} {maxx} {maxy}" version="1.1">
 <path stroke="black" d="{path}"/>
 <path stroke="green" d="M{p1x},{p1y} L{p2x},{p2y}"/>
-{edges}
+{intersections}
 <circle stroke="red" cx="{cx}" cy="{cy}" r="0.5"/>
 </svg>"#,
     ).unwrap();
+}
+
+/// Convenience function for making a float point from an integer point
+fn vertex_to_point<T: PrimInt>(vertex: &[T; 2]) -> Point<f64> {
+    point(vertex[0].to_f64().unwrap(), vertex[1].to_f64().unwrap())
 }
 
 #[cfg(test)]
