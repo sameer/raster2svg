@@ -98,9 +98,11 @@ pub fn render_stipple_based(
                 scaled_density < split_threshold * line_area,
                 cell_properties.phi_oriented_segment_through_centroid,
             ) {
+                // Below remove threshold, remove point
                 (true, _, _) => {
                     changed = true;
                 }
+                // Below split threshold, keep as centroid
                 (false, true, _) | (_, _, None) => {
                     let new_site = centroid
                         .clamp(zero, upper_bound)
@@ -110,9 +112,13 @@ pub fn render_stipple_based(
                     changed |= *site != new_site;
                     new_sites.push(new_site);
                 }
+                // Above split threshold, split along phi from the centroid
                 (false, false, Some(line_segment)) => {
                     if line_segment.length() < f64::EPSILON {
-                        warn!("ohno {:?}", &line_segment);
+                        warn!(
+                            "It shouldn't be possible to have a phi segment of 0 length here: {:?}",
+                            &cell_properties.centroid
+                        );
                     }
                     let left = line_segment
                         .sample(1. / 3.)
@@ -129,7 +135,14 @@ pub fn render_stipple_based(
 
                     changed = true;
                     new_sites.push(left);
-                    new_sites.push(right);
+                    if left == right {
+                        warn!(
+                            "Splitting a point produced the same point: {:?}",
+                            &cell_properties.centroid
+                        );
+                    } else {
+                        new_sites.push(right);
+                    }
                 }
             }
         }
