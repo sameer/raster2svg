@@ -75,7 +75,7 @@ pub fn render_stipple_based(
 
         let mut new_sites = Vec::with_capacity(voronoi_sites.len());
         let mut changed = false;
-        for (_, points) in voronoi_sites.iter().zip(sites_to_points.iter()) {
+        for (site, points) in voronoi_sites.iter().zip(sites_to_points.iter()) {
             let cell_properties = calculate_cell_properties(image.view(), points);
             let moments = cell_properties.moments;
 
@@ -93,51 +93,43 @@ pub fn render_stipple_based(
             let zero = Point::zero();
             let upper_bound = point((width - 1) as f64, (height - 1) as f64);
 
-            if scaled_density < remove_threshold * line_area {
-                changed = true;
-                continue;
-            } else if scaled_density < split_threshold * line_area {
-                new_sites.push(
-                    centroid
+            match (
+                scaled_density < remove_threshold * line_area,
+                scaled_density < split_threshold * line_area,
+                cell_properties.phi_oriented_segment_through_centroid,
+            ) {
+                (true, _, _) => {
+                    changed = true;
+                }
+                (false, true, _) | (_, _, None) => {
+                    let new_site = centroid
                         .clamp(zero, upper_bound)
                         .round()
                         .cast::<i64>()
-                        .to_array(),
-                );
-            } else {
-                if cell_properties
-                    .phi_oriented_segment_through_centroid
-                    .is_none()
-                {
-                    new_sites.push(
-                        centroid
-                            .clamp(zero, upper_bound)
-                            .round()
-                            .cast::<i64>()
-                            .to_array(),
-                    );
-                    continue;
+                        .to_array();
+                    changed |= *site != new_site;
+                    new_sites.push(new_site);
                 }
+                (false, false, Some(line_segment)) => {
+                    if line_segment.length() < f64::EPSILON {
+                        warn!("ohno {:?}", &line_segment);
+                    }
+                    let left = line_segment
+                        .sample(1. / 3.)
+                        .clamp(zero, upper_bound)
+                        .round()
+                        .cast::<i64>()
+                        .to_array();
+                    let right = line_segment
+                        .sample(2. / 3.)
+                        .clamp(zero, upper_bound)
+                        .round()
+                        .cast::<i64>()
+                        .to_array();
 
-                let line_segment = cell_properties
-                    .phi_oriented_segment_through_centroid
-                    .unwrap();
-                let left = line_segment.sample(0.25);
-                let right = line_segment.sample(0.75);
-
-                if let Some((left, right)) = left
-                    .round()
-                    .clamp(zero, upper_bound)
-                    .try_cast::<i64>()
-                    .zip(right.round().clamp(zero, upper_bound).try_cast::<i64>())
-                    .map(|(left, right)| (left.to_array(), right.to_array()))
-                {
                     changed = true;
                     new_sites.push(left);
                     new_sites.push(right);
-                } else {
-                    warn!("could not split: {:?} {:?}", left, right);
-                    new_sites.push(centroid.clamp(zero, upper_bound).cast::<i64>().to_array());
                 }
             }
         }
