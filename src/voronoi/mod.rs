@@ -31,6 +31,23 @@ where
     }
 }
 
+pub struct AnnotatedSite<T, U> {
+    pub site: [T; 2],
+    pub annotation: U,
+}
+
+impl<T, U> Site<T> for AnnotatedSite<T, U>
+where
+    T: PrimInt + Signed + FromPrimitive + Debug,
+{
+    fn dist(&self, point: [T; 2]) -> f64 {
+        abs_distance_squared(self.site, point).to_f64().unwrap()
+    }
+    fn seeds(&self, _width: usize, _height: usize) -> Vec<[T; 2]> {
+        vec![self.site]
+    }
+}
+
 /// 1D site (line segment)
 impl<T> Site<T> for LineSegment<f64>
 where
@@ -317,7 +334,16 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
 
             let mut edge_intersections_with_phi_line = edges_it
                 .clone()
-                .filter_map(|edge| edge.line_intersection(&phi_line))
+                .filter_map(|edge| {
+                    edge.line_intersection(&phi_line).or_else(|| {
+                        // Edge case where line segments are not inclusive of their endpoints
+                        if phi_line.distance_to_point(&edge.to) < HULL_EPSILON {
+                            Some(edge.to)
+                        } else {
+                            None
+                        }
+                    })
+                })
                 .collect::<Vec<_>>();
 
             // We may see more than 2 intersections if:
@@ -327,6 +353,12 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
                 a.x.partial_cmp(&b.x)
                     .unwrap()
                     .then(a.y.partial_cmp(&b.y).unwrap())
+            });
+            edge_intersections_with_phi_line.dedup_by(|a, b| a.distance_to(*b) < HULL_EPSILON);
+            edge_intersections_with_phi_line.sort_by(|a, b| {
+                a.y.partial_cmp(&b.y)
+                    .unwrap()
+                    .then(a.x.partial_cmp(&b.x).unwrap())
             });
             edge_intersections_with_phi_line.dedup_by(|a, b| a.distance_to(*b) < HULL_EPSILON);
 
