@@ -1,6 +1,7 @@
 #[macro_export]
-/// Implementation of the [Kahan-Babushka-Neumaier algorithm](https://en.wikipedia.org/wiki/Kahan_summation_algorithm#Further_enhancements)
-/// for reduced numerical error in summation
+/// Implementation of the Kahan-Babushka-Neumaier algorithm for reduced numerical error in summation
+///
+/// <https://en.wikipedia.org/wiki/Kahan_summation_algorithm#Further_enhancements>
 macro_rules! kbn_summation {
     (for $pat: pat in $expr: expr => {
         $('loop: { $(let $loopvar: ident = $loopvar_expr: expr;)* })?
