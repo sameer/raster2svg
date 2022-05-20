@@ -54,6 +54,7 @@ Notice for lawyers: no papers are hosted here, they are all provided by the auth
 
 * Weighted Voronoi Stippling https://www.cs.ubc.ca/labs/imager/tr/2002/secord2002b/secord.2002b.pdf
 * Weighted Linde-Buzo-Gray Stippling http://graphics.uni-konstanz.de/publikationen/Deussen2017LindeBuzoGray/WeightedLindeBuzoGrayStippling_authorversion.pdf
+* Multi-Class Inverted Stippling https://kops.uni-konstanz.de/bitstream/handle/123456789/55976/Schulz_2-3pieljazuoer1.pdf?sequence=1&isAllowed=y
 * Linking soft computing to art introduction of efficient k-continuous line drawing https://ieyjzhou.github.io/CIEG/Paper/KCLD_2018_Published_Version.pdf
 * Andrew's monotone chain convex hull algorithm https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain
 * Beyond Stippling -- Methods for Distributing Objects on the Plane: http://kops.uni-konstanz.de/bitstream/handle/123456789/6219/Beyond_Stippling_Methods_for_Distributing_Objects_on_the_Plane_2003.pdf?sequence=1&isAllowed=y

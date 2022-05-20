@@ -505,44 +505,31 @@ fn main() -> io::Result<()> {
     ctx.rectangle(0., 0., width, height);
     ctx.fill().unwrap();
 
-    for (k, color) in colors.iter().enumerate() {
-        info!("Processing {}", color);
-        ctx.set_source_rgb(color[0], color[1], color[2]);
-        let implement_diameter = match opt.implements[k] {
-            Implement::Pen { diameter, .. } => {
-                ctx.set_line_cap(LineCap::Round);
-                ctx.set_line_join(LineJoin::Round);
-                diameter.get::<millimeter>()
-            }
-            Implement::Pencil => todo!(),
-            Implement::Marker => todo!(),
-        };
-        ctx.set_line_width(implement_diameter);
-        let implement_diameter_in_pixels = implement_diameter * dots_per_mm;
-        match opt.style {
-            Style::EdgesPlusHatching => {
-                if k == 3 {
-                    render_fdog_based(
-                        image_in_implements.slice(s![k, .., ..]),
-                        opt.super_sample,
-                        implement_diameter_in_pixels,
-                        opt.style,
-                        &ctx,
-                        {
-                            let mut mat = Matrix::identity();
-                            mat.scale(
-                                1.0 / dots_per_mm / opt.super_sample as f64,
-                                1.0 / dots_per_mm / opt.super_sample as f64,
-                            );
-                            mat
-                        },
-                    )
-                }
-            }
-            _ => render_stipple_based(
-                image_in_implements.slice(s![k, .., ..]),
+    match opt.style {
+        Style::Stipple | Style::Tsp | Style::Mst | Style::Triangulation | Style::Voronoi => {
+            render_stipple_based(
+                image_in_implements.view(),
+                &opt.implements
+                    .iter()
+                    .map(|implement| {
+                        if let Implement::Pen { diameter, .. } = implement {
+                            diameter.get::<millimeter>() * dots_per_mm
+                        } else {
+                            todo!()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                &opt.implements
+                    .iter()
+                    .map(|implement| {
+                        if let Implement::Pen { color, .. } = implement {
+                            *color
+                        } else {
+                            todo!()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
                 opt.super_sample,
-                implement_diameter_in_pixels,
                 opt.style,
                 &ctx,
                 {
@@ -553,7 +540,25 @@ fn main() -> io::Result<()> {
                     );
                     mat
                 },
-            ),
+            )
+        }
+        Style::EdgesPlusHatching => {
+            todo!()
+            //             render_fdog_based(
+            //                 image_in_implements.slice(s![k, .., ..]),
+            //                 opt.super_sample,
+            //                 implement_diameter_in_pixels,
+            //                 opt.style,
+            //                 &ctx,
+            //                 {
+            //                     let mut mat = Matrix::identity();
+            //                     mat.scale(
+            //                         1.0 / dots_per_mm / opt.super_sample as f64,
+            //                         1.0 / dots_per_mm / opt.super_sample as f64,
+            //                     );
+            //                     mat
+            //                 },
+            //             )
         }
     }
     Ok(())
