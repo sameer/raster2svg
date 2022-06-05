@@ -171,10 +171,9 @@ pub fn jump_flooding_voronoi<
                         };
                     }
                 };
-                grid.assign(&scratchpad);
             }
         }
-
+        grid.assign(&scratchpad);
         round_step /= 2;
     }
 
