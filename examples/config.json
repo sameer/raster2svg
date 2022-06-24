@@ -1,13 +1,68 @@
 {
     "dots_per_inch": 96,
-    "style": "tsp",
-    "color_model": "hsl",
+    "style": "stipple",
+    "color_model": "cielab",
+    "color_method": "vector",
     "super_sample": 1,
     "implements": [
         {
             "Pen": {
                 "diameter": 0.001,
+                "color": "#158fd4"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#382375"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
                 "color": "#000000"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#222c8f"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#517b23"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#d62e69"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#dc12fa"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#2547b4"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#20835f"
+            }
+        },
+        {
+            "Pen": {
+                "diameter": 0.001,
+                "color": "#c72537"
             }
         }
     ]

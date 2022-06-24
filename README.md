@@ -48,7 +48,6 @@ Notice for lawyers: no papers are hosted here, they are all provided by the auth
 * https://en.wikipedia.org/wiki/CIE_1931_color_space
 * https://en.wikipedia.org/wiki/CIELAB_color_space
 * From Stippling to Scribbling http://archive.bridgesmathart.org/2015/bridges2015-267.pdf
-* On Spatial Quantization of Color Images https://www.researchgate.net/profile/Joachim-Buhmann/publication/220502178_On_spatial_quantization_of_color_images/links/00463516c3bf756dd3000000/On-spatial-quantization-of-color-images.pdf?origin=publication_detail
 
 ## Stippling
 

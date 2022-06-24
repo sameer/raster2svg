@@ -4,7 +4,7 @@ use std::io::Write;
 
 use log::info;
 use lyon_geom::{euclid::Vector2D, point, Angle, Line, LineSegment, Point, Vector};
-use ndarray::{par_azip, prelude::*};
+use ndarray::{par_azip, prelude::*, IxDyn, SliceInfo};
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rustc_hash::FxHashSet as HashSet;
 
@@ -13,43 +13,43 @@ use crate::{abs_distance_squared, get_slice_info_for_offset, kbn_summation};
 mod hull;
 
 /// An arbitrary Voronoi site with 0, 1, or 2 dimensions.
-pub trait Site<T: PrimInt + FromPrimitive + Debug> {
-    fn dist(&self, point: [T; 2]) -> f64;
-    fn seeds(&self, width: usize, height: usize) -> Vec<[T; 2]>;
+pub trait Site<const N: usize, T: PrimInt + FromPrimitive + Debug> {
+    fn dist(&self, point: [T; N]) -> f64;
+    fn seeds(&self, dimensions: &[usize; N]) -> Vec<[T; N]>;
 }
 
 /// 0D site (point)
-impl<T> Site<T> for [T; 2]
+impl<const N: usize, T> Site<N, T> for [T; N]
 where
     T: PrimInt + Signed + FromPrimitive + Debug,
 {
-    fn dist(&self, point: [T; 2]) -> f64 {
+    fn dist(&self, point: [T; N]) -> f64 {
         abs_distance_squared(*self, point).to_f64().unwrap()
     }
-    fn seeds(&self, _width: usize, _height: usize) -> Vec<[T; 2]> {
+    fn seeds(&self, _dimensions: &[usize; N]) -> Vec<[T; N]> {
         vec![*self]
     }
 }
 
-pub struct AnnotatedSite<T, U> {
-    pub site: [T; 2],
+pub struct AnnotatedSite<const N: usize, T, U> {
+    pub site: [T; N],
     pub annotation: U,
 }
 
-impl<T, U> Site<T> for AnnotatedSite<T, U>
+impl<const N: usize, T, U> Site<N, T> for AnnotatedSite<N, T, U>
 where
     T: PrimInt + Signed + FromPrimitive + Debug,
 {
-    fn dist(&self, point: [T; 2]) -> f64 {
+    fn dist(&self, point: [T; N]) -> f64 {
         abs_distance_squared(self.site, point).to_f64().unwrap()
     }
-    fn seeds(&self, _width: usize, _height: usize) -> Vec<[T; 2]> {
+    fn seeds(&self, _dimensions: &[usize; N]) -> Vec<[T; N]> {
         vec![self.site]
     }
 }
 
 /// 1D site (line segment)
-impl<T> Site<T> for LineSegment<f64>
+impl<T> Site<2, T> for LineSegment<f64>
 where
     T: PrimInt + FromPrimitive + Debug + Hash,
 {
@@ -67,7 +67,7 @@ where
     }
 
     /// All integer points close to the line
-    fn seeds(&self, width: usize, height: usize) -> Vec<[T; 2]> {
+    fn seeds(&self, [width, height]: &[usize; 2]) -> Vec<[T; 2]> {
         let mut seeds = HashSet::default();
 
         let width = (width - 1) as f64;
@@ -106,15 +106,18 @@ where
 ///
 /// Specifically, this is described in <https://www.comp.nus.edu.sg/~tants/jfa/i3d06.pdf>
 pub fn jump_flooding_voronoi<
-    S: Site<T> + Send + Sync,
+    S: Site<2, T> + Send + Sync,
     T: PrimInt + FromPrimitive + Debug + Send + Sync,
 >(
     sites: &[S],
-    width: usize,
-    height: usize,
-) -> Array2<usize> {
+    dimensions: [usize; 2],
+) -> Array<usize, IxDyn> {
+    const N: usize = 2;
+    if N != 2 {
+        unimplemented!();
+    }
     // use usize::MAX to represent colorless cells
-    let mut grid = Array2::from_elem((width, height), usize::MAX);
+    let mut grid = Array::from_elem(IxDyn(&dimensions), usize::MAX);
 
     if sites.is_empty() {
         return grid;
@@ -122,12 +125,18 @@ pub fn jump_flooding_voronoi<
 
     // Prime JFA with seeds
     sites.iter().enumerate().for_each(|(color, site)| {
-        for seed in site.seeds(width, height) {
-            grid[[seed[0].to_usize().unwrap(), seed[1].to_usize().unwrap()]] = color;
+        for seed in site.seeds(&dimensions) {
+            let mut index = [0usize; N];
+            for i in 0..N {
+                index[i] = seed[i].to_usize().unwrap();
+            }
+            grid[index.as_slice()] = color;
         }
     });
 
     // Needed to parallelize JFA
+    let width = dimensions[0];
+    let height = dimensions[1];
     let positions = Array::from_iter((0..width).flat_map(|x| {
         (0..height).map(move |y| [T::from_usize(x).unwrap(), T::from_usize(y).unwrap()])
     }))
@@ -137,10 +146,11 @@ pub fn jump_flooding_voronoi<
     let mut scratchpad = grid.clone();
 
     // First round is of size n/2 where n is a power of 2
-    let mut round_step = (width.max(height))
+    let max_dim = dimensions.iter().max().unwrap();
+    let mut round_step = max_dim
         .checked_next_power_of_two()
         .map(|x| x / 2)
-        .unwrap_or_else(|| (width.max(height) / 2).next_power_of_two());
+        .unwrap_or_else(|| (max_dim / 2).next_power_of_two());
 
     while round_step != 0 {
         // Each grid point passes its contents on to (x+i, y+j) where i,j in {-round_step, 0, round_step}
@@ -181,17 +191,21 @@ pub fn jump_flooding_voronoi<
 }
 
 /// Converts a JFA-assigned color grid into a list of points assigned to each site
-pub fn colors_to_assignments<S: Site<T>, T: PrimInt + FromPrimitive + Debug>(
+pub fn colors_to_assignments<const N: usize, S: Site<N, T>, T: PrimInt + FromPrimitive + Debug>(
     sites: &[S],
-    grid: ArrayView2<usize>,
-) -> Vec<Vec<[T; 2]>> {
+    grid: ArrayView<usize, IxDyn>,
+) -> Vec<Vec<[T; N]>> {
     if sites.is_empty() {
         return vec![];
     }
     let expected_assignment_capacity = grid.len() / sites.len();
     let mut sites_to_points = vec![Vec::with_capacity(expected_assignment_capacity); sites.len()];
-    grid.indexed_iter().for_each(|((i, j), site)| {
-        sites_to_points[*site].push([T::from_usize(i).unwrap(), T::from_usize(j).unwrap()])
+    grid.indexed_iter().for_each(|(idx, site)| {
+        let mut t_idx = [T::zero(); N];
+        for i in 0..N {
+            t_idx[i] = T::from_usize(idx[i]).unwrap();
+        }
+        sites_to_points[*site].push(t_idx);
     });
     sites_to_points
 }
@@ -301,7 +315,7 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
     let phi_vector = Vector2D::from_angle_and_length(phi, 1.);
     cell_properties.phi_vector = Some(phi_vector);
 
-    const HULL_EPSILON: f64 = 1E-8;
+    const HULL_EPSILON: f64 = 1e-8;
 
     if points.len() >= 3 {
         let hull = hull::convex_hull(points);
@@ -372,8 +386,18 @@ pub fn calculate_cell_properties<T: PrimInt + FromPrimitive + Debug + Default>(
                         to: *right,
                     },
                     (false, false, other) => {
+                        edges_it.clone().for_each(|edge| {
+                            dbg!(edge.to_line().distance_to_point(&centroid));
+                        });
                         to_svg(&hull, centroid, phi_vector, other);
-                        unreachable!()
+                        if other.len() >= 2 {
+                            LineSegment {
+                                from: other[0],
+                                to: other[1],
+                            }
+                        } else {
+                            unreachable!()
+                        }
                     }
                     (true, false, other) => {
                         to_svg(&hull, centroid, phi_vector, other);
@@ -506,7 +530,7 @@ mod tests {
             [WIDTH as i64 - 1, HEIGHT as i64 - 1],
             [WIDTH as i64 / 2, HEIGHT as i64 / 2],
         ];
-        let assignments = jump_flooding_voronoi(&sites, WIDTH, HEIGHT);
+        let assignments = jump_flooding_voronoi(&sites, [WIDTH, HEIGHT]);
         for j in 0..HEIGHT {
             for i in 0..WIDTH {
                 let min_distance = sites

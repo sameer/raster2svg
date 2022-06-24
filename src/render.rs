@@ -18,7 +18,9 @@ use log::{debug, info, warn};
 use lyon_geom::{point, Point};
 use ndarray::prelude::*;
 use rand::{thread_rng, Rng};
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use spade::delaunay::IntDelaunayTriangulation;
 
 pub fn render_fdog_based(
@@ -107,7 +109,7 @@ pub fn render_stipple_based(
                 debug!("Draw to svg");
                 let sites_to_points = colors_to_assignments(
                     &voronoi_sites,
-                    jump_flooding_voronoi(&voronoi_sites, width, height).view(),
+                    jump_flooding_voronoi(&voronoi_sites, [width, height]).view(),
                 );
                 for points in sites_to_points {
                     let properties = calculate_cell_properties(image, &points);
@@ -205,12 +207,13 @@ fn run_mlbg_stippling(
         })
         .collect::<Vec<_>>();
 
-    for iteration in 0..140 {
+    for iteration in 0..30 {
         let current_hysteresis = INITIAL_HYSTERESIS + iteration as f64 * HYSTERESIS_DELTA;
         let remove_threshold = 1. - current_hysteresis / 2.;
         let split_threshold = 1. + current_hysteresis / 2.;
 
-        let changed = AtomicBool::new(false);
+        debug!("Computing global cell centroids");
+
         let class_to_site_global_centroids = {
             let mut acc = class_to_sites
                 .iter()
@@ -231,7 +234,7 @@ fn run_mlbg_stippling(
                 })
                 .flatten()
                 .collect::<Vec<_>>();
-            let global_colored_pixels = jump_flooding_voronoi(&global_sites, width, height);
+            let global_colored_pixels = jump_flooding_voronoi(&global_sites, [width, height]);
             let global_sites_to_points =
                 colors_to_assignments(&global_sites, global_colored_pixels.view());
             global_sites_to_points
@@ -260,21 +263,23 @@ fn run_mlbg_stippling(
             acc
         };
 
+        let changed = AtomicBool::new(false);
         // Don't parallelize outer loop b/c inner loop already uses all cores
         class_to_sites = (0..classes)
-            .into_iter()
-            .map(|k| class_images.slice(s![k, .., ..]))
-            .zip(implement_areas.iter())
-            .zip(class_to_sites.iter())
-            .zip(class_to_site_global_centroids.iter())
+            .into_par_iter()
+            .map(|k| (k,class_images.slice(s![k, .., ..])))
+            .zip(implement_areas.par_iter())
+            .zip(class_to_sites.par_iter())
+            .zip(class_to_site_global_centroids.par_iter())
             .map(
-                |(((class_image, implement_area), sites), site_global_centroids)| {
+                |((((k, class_image), implement_area), sites), site_global_centroids)| {
                     if sites.is_empty() {
                         return vec![];
                     }
-                    let colored_pixels = jump_flooding_voronoi(&sites, width, height);
+                    debug!("JFA class {k}");
+                    let colored_pixels = jump_flooding_voronoi(&sites, [width, height]);
                     let sites_to_points = colors_to_assignments(&sites, colored_pixels.view());
-
+                    debug!("Assign class {k}");
                     sites
                         .par_iter()
                         .zip(sites_to_points.par_iter())
