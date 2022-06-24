@@ -106,7 +106,9 @@ fn approximate_tsp_with_mst_greedy<
                 .map(move |adjacency| (branch, adjacency))
         })
         .collect::<Vec<_>>();
-    branch_list.sort_by_key(|(branch, adjacency)| Edge([vertices[*branch], vertices[*adjacency]]));
+    branch_list.sort_unstable_by_key(|(branch, adjacency)| {
+        Edge([vertices[*branch], vertices[*adjacency]])
+    });
 
     while let Some((branch, disconnected_node)) = branch_list.pop() {
         dbg!(branch_list.len());
