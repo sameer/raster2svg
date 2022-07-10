@@ -4,8 +4,14 @@ use num_traits::PrimInt;
 
 /// Andrew's monotone chain convex hull algorithm
 ///
+/// Points must be sorted by x-coordinate and tie-broken by y-coordinate
+///
 /// <https://en.wikibooks.org/wiki/Algorithm_Implementation/Geometry/Convex_hull/Monotone_chain>
 pub fn convex_hull<T: PrimInt + Debug>(points: &[[T; 2]]) -> Vec<[T; 2]> {
+    if points.len() <= 3 {
+        return points.to_vec();
+    }
+
     let mut lower = Vec::with_capacity(points.len() / 2);
     for point in points {
         while lower.len() >= 2
