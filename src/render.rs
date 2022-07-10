@@ -8,9 +8,7 @@ use crate::{
     },
     graph::{mst, tsp},
     kbn_summation,
-    voronoi::{
-        calculate_cell_properties, colors_to_assignments, jump_flooding_voronoi, AnnotatedSite,
-    },
+    voronoi::{colors_to_assignments, jump_flooding_voronoi, AnnotatedSite, CellProperties},
     Style,
 };
 use cairo::{Context, LineCap, LineJoin, Matrix};
@@ -112,7 +110,7 @@ pub fn render_stipple_based(
                     jump_flooding_voronoi(&voronoi_sites, [width, height]).view(),
                 );
                 for points in sites_to_points {
-                    let properties = calculate_cell_properties(image, &points);
+                    let properties = CellProperties::calculate(image, &points);
                     if let Some(hull) = properties.hull {
                         ctx.set_matrix(matrix);
                         if let Some(first) = hull.first() {
@@ -207,7 +205,7 @@ fn run_mlbg_stippling(
         })
         .collect::<Vec<_>>();
 
-    for iteration in 0..30 {
+    for iteration in 0..140 {
         let current_hysteresis = INITIAL_HYSTERESIS + iteration as f64 * HYSTERESIS_DELTA;
         let remove_threshold = 1. - current_hysteresis / 2.;
         let split_threshold = 1. + current_hysteresis / 2.;
@@ -244,7 +242,7 @@ fn run_mlbg_stippling(
                     let (num_centroids, summed_centroid) = (0..classes)
                         .filter_map(|k| {
                             let class_image = class_images.slice(s![k, .., ..]);
-                            calculate_cell_properties(class_image, &points).centroid
+                            CellProperties::calculate(class_image, &points).centroid
                         })
                         .fold(
                             (0, ZERO),
@@ -287,7 +285,7 @@ fn run_mlbg_stippling(
                         .map(|((site, points), global_centroid)| {
                             let mut rng = thread_rng();
                             let cell_properties =
-                                calculate_cell_properties(class_image.view(), points);
+                            CellProperties::calculate(class_image.view(), points);
                             let moments = &cell_properties.moments;
 
                             // Density is very low, remove this point early
@@ -299,7 +297,7 @@ fn run_mlbg_stippling(
                                 kbn_summation! {
                                     for other_class_cell_properties in (0..classes).map(|k| {
                                         let other_class_image = class_images.slice(s![k, .., ..]);
-                                        calculate_cell_properties(other_class_image, &points)
+                                        CellProperties::calculate(other_class_image, &points)
                                     }) => {
                                         sum_class_densities += other_class_cell_properties.moments.m00 / points.len() as f64;
                                     }
