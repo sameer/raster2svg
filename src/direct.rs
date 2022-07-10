@@ -60,14 +60,9 @@ where
         let mut rectangles_by_size: Vec<Group> = vec![];
         let mut num_evaluations = 0;
         let (mut xmin, mut fmin) = self.initialize(&mut rectangles_by_size, &mut num_evaluations);
-        for it in 0..self.max_iterations.unwrap_or(usize::MAX) {
+        for _it in 0..self.max_iterations.unwrap_or(usize::MAX) {
             if let Some(max_evaluations) = self.max_evaluations {
                 if num_evaluations >= max_evaluations {
-                    break;
-                }
-            }
-            if let Some(max_iterations) = self.max_iterations {
-                if it >= max_iterations {
                     break;
                 }
             }
@@ -116,7 +111,7 @@ where
     ) -> Vec<Rectangle> {
         let fmin_is_zero = fmin.abs() < f64::EPSILON;
 
-        let mut potentially_optimal_indices_by_size = vec![];
+        let mut potentially_optimal_group_indices = vec![];
 
         for (
             i,
@@ -127,12 +122,6 @@ where
             },
         ) in rectangles_by_size.iter().enumerate()
         {
-            // Lemma 3.3 (6)
-            // let candidates = group_rectangles
-            //     .iter()
-            //     .enumerate()
-            //     .filter(|(_, r)| (r.fmin - group_fmin).abs() < f64::EPSILON);
-            // for (j, candidate) in candidates {
             let minimum_larger_diff = rectangles_by_size[i + 1..]
                 .iter()
                 .map(
@@ -169,7 +158,7 @@ where
                     // Lemma 3.3 (8)
                     self.epsilon
                         <= (fmin - group_fmin) / fmin.abs()
-                            + group_fmin / fmin.abs() * minimum_larger_diff
+                            + group_size / fmin.abs() * minimum_larger_diff
                 } else {
                     // Lemma 3.3 (9)
                     *group_fmin <= group_size * minimum_larger_diff
@@ -181,51 +170,38 @@ where
             };
 
             if is_potentially_optimal {
-                potentially_optimal_indices_by_size.push(i);
+                potentially_optimal_group_indices.push(i);
             }
-            // }
         }
 
         let mut potentially_optimal = vec![];
-        for i in potentially_optimal_indices_by_size.into_iter().rev() {
+        for i in potentially_optimal_group_indices.into_iter().rev() {
             let mut group = &mut rectangles_by_size[i];
-            let (mut add_to_potentially_optimal, restore_to_group) = group
+            // Lemma 3.3 (6)
+            let potentially_optimal_rectangle_indices = group
                 .rectangles
-                .drain(..)
-                .partition(|r| (r.fmin - group.fmin).abs() < f64::EPSILON);
-            potentially_optimal.append(&mut add_to_potentially_optimal);
-            if restore_to_group.is_empty() {
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| (r.fmin - group.fmin).abs() < f64::EPSILON)
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>();
+
+            potentially_optimal.reserve(potentially_optimal_rectangle_indices.len());
+            for j in potentially_optimal_rectangle_indices.into_iter().rev() {
+                potentially_optimal.push(group.rectangles.remove(j));
+            }
+            if group.rectangles.is_empty() {
                 drop(group);
                 rectangles_by_size.remove(i);
             } else {
-                group.fmin = restore_to_group
+                group.fmin = group
+                    .rectangles
                     .iter()
                     .map(|r| r.fmin)
                     .min_by(|a, b| a.partial_cmp(&b).unwrap())
                     .unwrap();
-                group.rectangles = restore_to_group;
             }
         }
-        // for (i, potentially_optimal_indices) in (0..rectangles_by_size.len())
-        //     .rev()
-        //     .zip(potentially_optimal_indices_by_size.into_iter().rev())
-        // {
-        //     let group = &mut rectangles_by_size[i];
-        //     for j in potentially_optimal_indices.into_iter().rev() {
-        //         potentially_optimal.push(group.rectangles.remove(j));
-        //     }
-        //     if group.rectangles.is_empty() {
-        //         drop(group);
-        //         rectangles_by_size.remove(i);
-        //     } else {
-        //         group.fmin = group
-        //             .rectangles
-        //             .iter()
-        //             .map(|r| r.fmin)
-        //             .min_by(|a, b| a.partial_cmp(&b).unwrap())
-        //             .unwrap();
-        //     }
-        // }
 
         potentially_optimal
     }
@@ -241,6 +217,7 @@ where
         let max_bound_range = rectangle
             .bound_ranges
             .iter()
+            .copied()
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap();
 
@@ -310,37 +287,38 @@ where
                 Ok(i) => {
                     let group = &mut rectangles[i];
                     group.fmin = group.fmin.min(w_values[wj_index]);
-                    group.rectangles.extend((0..1).map(|k| Rectangle {
-                        bound_ranges: bound_ranges.clone(),
-                        size,
-                        center: c_δ_e.slice(s![wj_index, k, ..]).to_owned(),
-                        fmin: f_c_δ_e[[wj_index, k]],
-                    }));
+                    group.rectangles.reserve(2);
+                    for k in 0..1 {
+                        group.rectangles.push(Rectangle {
+                            bound_ranges: bound_ranges.clone(),
+                            size,
+                            center: c_δ_e.slice(s![wj_index, k, ..]).to_owned(),
+                            fmin: f_c_δ_e[[wj_index, k]],
+                        });
+                    }
                 }
                 Err(i) => {
-                    if size > f64::EPSILON {
-                        rectangles.insert(
-                            i,
-                            Group {
-                                size,
-                                fmin: w_values[wj_index],
-                                rectangles: vec![
-                                    Rectangle {
-                                        bound_ranges: bound_ranges.clone(),
-                                        size,
-                                        center: c_δ_e.slice(s![wj_index, 0, ..]).to_owned(),
-                                        fmin: f_c_δ_e[[wj_index, 0]],
-                                    },
-                                    Rectangle {
-                                        bound_ranges: bound_ranges.clone(),
-                                        size,
-                                        center: c_δ_e.slice(s![wj_index, 1, ..]).to_owned(),
-                                        fmin: f_c_δ_e[[wj_index, 1]],
-                                    },
-                                ],
-                            },
-                        );
-                    }
+                    rectangles.insert(
+                        i,
+                        Group {
+                            size,
+                            fmin: w_values[wj_index],
+                            rectangles: vec![
+                                Rectangle {
+                                    bound_ranges: bound_ranges.clone(),
+                                    size,
+                                    center: c_δ_e.slice(s![wj_index, 0, ..]).to_owned(),
+                                    fmin: f_c_δ_e[[wj_index, 0]],
+                                },
+                                Rectangle {
+                                    bound_ranges: bound_ranges.clone(),
+                                    size,
+                                    center: c_δ_e.slice(s![wj_index, 1, ..]).to_owned(),
+                                    fmin: f_c_δ_e[[wj_index, 1]],
+                                },
+                            ],
+                        },
+                    );
                 }
             }
 
@@ -360,16 +338,14 @@ where
                 group.rectangles.push(prev_rectangle);
             }
             Err(i) => {
-                if prev_rectangle.size > f64::EPSILON {
-                    rectangles.insert(
-                        i,
-                        Group {
-                            size: prev_rectangle.size,
-                            fmin: prev_rectangle.fmin,
-                            rectangles: vec![prev_rectangle],
-                        },
-                    );
-                }
+                rectangles.insert(
+                    i,
+                    Group {
+                        size: prev_rectangle.size,
+                        fmin: prev_rectangle.fmin,
+                        rectangles: vec![prev_rectangle],
+                    },
+                );
             }
         }
 
@@ -387,7 +363,7 @@ where
 #[cfg(test)]
 mod test {
     use lyon_geom::euclid::{UnknownUnit, Vector3D};
-    use ndarray::Array;
+    use ndarray::{array, azip, Array, Array1};
 
     use crate::{direct::Direct, ColorModel};
 
@@ -407,7 +383,7 @@ mod test {
     #[test]
     fn test_direct_real() {
         // abL
-        let implements: Vec<Vector3D<f64, UnknownUnit>> = vec![
+        let implements: Array1<Vector3D<f64, UnknownUnit>> = array![
             Vector3D::from((-12.33001605954215, -45.54515542156117, 44.2098529479848)),
             Vector3D::from((27.880276413952384, -45.45097702564241, 79.59139231597462)),
             Vector3D::from((0.0, 0.0, 100.0)),
@@ -423,16 +399,17 @@ mod test {
         let desired = [1.4826900028611403, 5.177699004088122, 0.27727267822882595];
         let direct = Direct {
             epsilon: 1e-4,
-            max_evaluations: Some(10000),
+            max_evaluations: Some(1_000_000),
             max_iterations: None,
             initial: Array::zeros(implements.len()),
             bounds: Array::from_elem(implements.len(), [0., 1.]),
             function: |param| {
-                let weighted_vector = implements
-                    .iter()
-                    .zip(param.iter())
-                    .map(|(p, x)| *p * *x)
-                    .sum::<Vector3D<f64, UnknownUnit>>();
+                let mut weighted_vector = Vector3D::zero();
+                azip! {
+                    (p in &param, i in &implements) {
+                        weighted_vector += *i * *p;
+                    }
+                }
                 // Convert back to cylindrical model (hue, chroma, darkness)
                 let actual = [
                     weighted_vector.y.atan2(weighted_vector.x),
@@ -440,7 +417,6 @@ mod test {
                     weighted_vector.z,
                 ];
                 ColorModel::Cielab.cylindrical_diff(actual, desired)
-                // + (actual[2] - desired[2]).abs()
             },
         };
         let (res, cost) = direct.run();
