@@ -1,5 +1,6 @@
-use crate::kbn_summation;
 use ndarray::{azip, s, stack, Array1, Array2, ArrayView1, Axis};
+
+use crate::kbn_summation;
 
 pub struct Direct<F>
 where
@@ -26,30 +27,6 @@ struct Group {
     size: f64,
     fmin: f64,
     rectangles: Vec<Rectangle>,
-}
-
-impl PartialEq for Group {
-    fn eq(&self, other: &Self) -> bool {
-        (self.size - other.size).abs() < f64::EPSILON
-    }
-}
-
-impl Eq for Group {}
-
-impl PartialOrd for Group {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.size.partial_cmp(&other.size)
-    }
-}
-
-impl Ord for Group {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        if self.eq(other) {
-            std::cmp::Ordering::Equal
-        } else {
-            self.partial_cmp(&other).unwrap()
-        }
-    }
 }
 
 impl<'a, F> Direct<F>
@@ -271,6 +248,9 @@ where
         // Each split divides into 3 rectangles
         // Because we may have multiple splits, we keep prev_rectangle for splitting along subsequent wj
         let mut prev_rectangle = rectangle;
+        // The size shrinks after each iteration so we only need to search below a previously found size
+        let mut binary_search_upper_bound = rectangles.len();
+
         for wj_index in indices_that_sort_w {
             let dim = indices[wj_index];
             let mut bound_ranges = prev_rectangle.bound_ranges;
@@ -283,7 +263,9 @@ where
             let size = size_squared.sqrt();
 
             // left, right
-            match rectangles.binary_search_by(|g| g.size.partial_cmp(&size).unwrap()) {
+            match rectangles[..binary_search_upper_bound]
+                .binary_search_by(|g| g.size.partial_cmp(&size).unwrap())
+            {
                 Ok(i) => {
                     let group = &mut rectangles[i];
                     group.fmin = group.fmin.min(w_values[wj_index]);
@@ -296,6 +278,7 @@ where
                             fmin: f_c_δ_e[[wj_index, k]],
                         });
                     }
+                    binary_search_upper_bound = i + 1;
                 }
                 Err(i) => {
                     rectangles.insert(
@@ -319,6 +302,7 @@ where
                             ],
                         },
                     );
+                    binary_search_upper_bound = i + 1;
                 }
             }
 
@@ -331,7 +315,9 @@ where
             };
         }
 
-        match rectangles.binary_search_by(|g| g.size.partial_cmp(&prev_rectangle.size).unwrap()) {
+        match rectangles[..binary_search_upper_bound]
+            .binary_search_by(|g| g.size.partial_cmp(&prev_rectangle.size).unwrap())
+        {
             Ok(i) => {
                 let group = &mut rectangles[i];
                 group.fmin = group.fmin.min(prev_rectangle.fmin);
