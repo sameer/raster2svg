@@ -88,17 +88,14 @@ where
     ) -> Vec<Rectangle> {
         let fmin_is_zero = fmin.abs() < f64::EPSILON;
 
-        let mut potentially_optimal_group_indices = vec![];
+        let mut potentially_optimal = vec![];
 
-        for (
-            i,
-            Group {
+        for i in (0..rectangles_by_size.len()).rev() {
+            let Group {
                 size: group_size,
                 fmin: group_fmin,
                 ..
-            },
-        ) in rectangles_by_size.iter().enumerate()
-        {
+            } = &rectangles_by_size[i];
             let minimum_larger_diff = rectangles_by_size[i + 1..]
                 .iter()
                 .map(
@@ -147,38 +144,25 @@ where
             };
 
             if is_potentially_optimal {
-                potentially_optimal_group_indices.push(i);
+                let mut group = &mut rectangles_by_size[i];
+                // Lemma 3.3 (6)
+                for j in (0..group.rectangles.len()).rev() {
+                    if (group.rectangles[j].fmin - group.fmin).abs() < f64::EPSILON {
+                        potentially_optimal.push(group.rectangles.remove(j));
+                    }
+                }
+                if group.rectangles.is_empty() {
+                    rectangles_by_size.remove(i);
+                } else {
+                    group.fmin = group
+                        .rectangles
+                        .iter()
+                        .map(|r| r.fmin)
+                        .min_by(|a, b| a.partial_cmp(b).unwrap())
+                        .unwrap();
+                }
             }
         }
-
-        let mut potentially_optimal = vec![];
-        for i in potentially_optimal_group_indices.into_iter().rev() {
-            let mut group = &mut rectangles_by_size[i];
-            // Lemma 3.3 (6)
-            let potentially_optimal_rectangle_indices = group
-                .rectangles
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| (r.fmin - group.fmin).abs() < f64::EPSILON)
-                .map(|(i, _)| i)
-                .collect::<Vec<_>>();
-
-            potentially_optimal.reserve(potentially_optimal_rectangle_indices.len());
-            for j in potentially_optimal_rectangle_indices.into_iter().rev() {
-                potentially_optimal.push(group.rectangles.remove(j));
-            }
-            if group.rectangles.is_empty() {
-                rectangles_by_size.remove(i);
-            } else {
-                group.fmin = group
-                    .rectangles
-                    .iter()
-                    .map(|r| r.fmin)
-                    .min_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap();
-            }
-        }
-
         potentially_optimal
     }
 
@@ -401,7 +385,7 @@ mod test {
                     weighted_vector.to_2d().length(),
                     weighted_vector.z,
                 ];
-                ColorModel::Cielab.cylindrical_diff(actual, desired)
+                ColorModel::Cielab.cylindrical_diff(desired, actual)
             },
         };
         let (res, cost) = direct.run();
@@ -420,7 +404,7 @@ mod test {
             cost,
             &res,
             &actual,
-            ColorModel::Cielab.cylindrical_diff(actual, desired)
+            ColorModel::Cielab.cylindrical_diff(desired, actual)
         );
         assert!(cost <= 4.0, "ciede2000 less than 4");
     }
