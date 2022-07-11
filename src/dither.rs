@@ -9,7 +9,7 @@ pub trait Dither {
         color: ArrayView1<f64>,
     ) -> Option<usize> {
         palette
-            .into_iter()
+            .iter()
             .enumerate()
             .min_by(|(_, a), (_, b)| {
                 let mut color_a_sq = color.to_owned() - *a;
@@ -34,8 +34,8 @@ impl Dither for FloydSteinberg {
         palette: &[[f64; N]],
     ) -> Array2<usize> {
         let palette_as_array = palette
-            .into_iter()
-            .map(|color| ArrayView::from(color))
+            .iter()
+            .map(ArrayView::from)
             .collect::<Vec<_>>();
         let (_colors, width, height) = image.dim();
 
