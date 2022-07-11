@@ -265,14 +265,12 @@ fn run_mlbg_stippling(
         };
 
         let changed = Once::new();
-        // Don't parallelize outer loop b/c inner loop already uses all cores
         class_to_sites = (0..classes)
             // .into_par_iter()
             .map(|k| (k, class_images.slice(s![k, .., ..])))
             .zip(implement_areas.iter())
             .zip(class_to_sites.iter())
             .zip(class_to_site_to_global_centroids.iter())
-            // .map(|k| (k,class_images.slice(s![k, .., ..])))
             // .zip(implement_areas.par_iter())
             // .zip(class_to_sites.par_iter())
             // .zip(class_to_site_to_global_centroids.par_iter())
@@ -285,12 +283,16 @@ fn run_mlbg_stippling(
                     let colored_pixels = jump_flooding_voronoi(sites, [width, height]);
                     let site_to_points = colors_to_assignments(sites, colored_pixels.view());
                     debug!("Assign class {k}");
+
+                    let mut rng = thread_rng();
                     sites
-                        .par_iter()
-                        .zip(site_to_points.par_iter())
-                        .zip(site_to_global_centroid.par_iter())
-                        .map(|((site, points), global_centroid)| {
-                            let mut rng = thread_rng();
+                        // .par_iter()
+                        // .zip(site_to_points.par_iter())
+                        // .zip(site_to_global_centroid.par_iter())
+                        .iter()
+                        .zip(site_to_points.iter())
+                        .zip(site_to_global_centroid.iter())
+                        .flat_map(|((site, points), global_centroid)| {
                             let cell_properties = CellProperties::calculate(class_image.view(), points);
                             let moments = &cell_properties.moments;
 
@@ -306,17 +308,16 @@ fn run_mlbg_stippling(
                                     }
                                 }
                                 let average_density = cell_properties.moments.m00 / points.len() as f64;
-                                rng.gen_bool((sum_class_densities - average_density).clamp(0., 1.))
+                                let should_use_class = rng.gen_bool((sum_class_densities - average_density).clamp(0., 1.));
+                                !should_use_class
                             };
                             let centroid = if should_use_global { global_centroid.unwrap() } else {cell_properties.centroid.unwrap()};
-
                             let scaled_density = moments.m00 / super_sample.pow(2) as f64;
-
-                            let line_area = implement_area;
+                            let stipple_area = implement_area;
 
                             match (
-                                scaled_density < remove_threshold * line_area,
-                                scaled_density < split_threshold * line_area,
+                                scaled_density < remove_threshold * stipple_area,
+                                scaled_density < split_threshold * stipple_area,
                                 cell_properties.phi_oriented_segment_through_centroid,
                             ) {
                                 // Below remove threshold, remove point
@@ -367,7 +368,6 @@ fn run_mlbg_stippling(
                                 }
                             }
                         })
-                        .flatten()
                         .collect()
                 },
             )
