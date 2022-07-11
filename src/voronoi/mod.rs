@@ -1,6 +1,6 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Write};
 use std::hash::Hash;
-use std::io::Write;
+use std::io::Write as IoWrite;
 
 use log::info;
 use lyon_geom::{euclid::Vector2D, point, Angle, Line, LineSegment, Point, Vector};
@@ -229,6 +229,48 @@ pub struct Moments {
     centroid: Point<f64>,
 }
 
+pub fn calculate_density<T: PrimInt>(image: ArrayView2<f64>, points: &[[T; 2]]) -> f64 {
+    if points.is_empty() {
+        return 0.;
+    }
+    kbn_summation! {
+        for [x, y] in points => {
+            'loop: {
+                let x = x.to_usize().unwrap();
+                let y = y.to_usize().unwrap();
+                let value = image[[x, y]];
+            }
+            m00 += value;
+        }
+    }
+    m00 / points.len() as f64
+}
+
+pub fn calculate_centroid<T: PrimInt>(
+    image: ArrayView2<f64>,
+    points: &[[T; 2]],
+) -> Option<Point<f64>> {
+    kbn_summation! {
+        for [x, y] in points => {
+            'loop: {
+                let x = x.to_usize().unwrap();
+                let y = y.to_usize().unwrap();
+                let value = image[[x, y]];
+                let x = x as f64;
+                let y = y as f64;
+            }
+            m00 += value;
+            m10 += x * value;
+            m01 += y * value;
+        }
+    }
+    if m00 < f64::EPSILON {
+        None
+    } else {
+        Some(point(m10 / m00, m01 / m00))
+    }
+}
+
 /// Hiller et al. Section 4 + Appendix B
 #[inline]
 fn calculate_moments<T: PrimInt>(image: ArrayView2<f64>, points: &[[T; 2]]) -> Moments {
@@ -455,13 +497,13 @@ fn to_svg<T: PrimInt + Debug>(
 ) {
     let mut path = String::new();
     if let Some(point) = hull.first() {
-        path += &format!("M{:?},{:?} ", point[0], point[1]);
+        write!(path, "M{:?},{:?} ", point[0], point[1]).unwrap();
     }
     if hull.len() >= 2 {
         path += "L";
     }
     for point in hull.iter().skip(1) {
-        path += &format!("{:?},{:?} ", point[0], point[1]);
+        write!(path, "{:?},{:?} ", point[0], point[1]).unwrap();
     }
     if hull.len() >= 3 {
         path += "Z";
@@ -494,7 +536,7 @@ fn to_svg<T: PrimInt + Debug>(
     );
     let mut intersections = String::default();
     for Point { x: tox, y: toy, .. } in edge_intersections_with_phi_line {
-        intersections += &format!(r#"<circle stroke="blue" cx="{tox}" cy="{toy}" r="0.5"/>"#);
+        write!(intersections, r#"<circle stroke="blue" cx="{tox}" cy="{toy}" r="0.5"/>"#).unwrap();
     }
     let width = maxx - minx;
     let height = maxy - miny;

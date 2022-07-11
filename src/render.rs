@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 
 use crate::{
     color::Color,
@@ -8,7 +8,10 @@ use crate::{
     },
     graph::{mst, tsp},
     kbn_summation,
-    voronoi::{colors_to_assignments, jump_flooding_voronoi, AnnotatedSite, CellProperties},
+    voronoi::{
+        calculate_centroid, calculate_density, colors_to_assignments, jump_flooding_voronoi,
+        AnnotatedSite, CellProperties,
+    },
     Style,
 };
 use cairo::{Context, LineCap, LineJoin, Matrix};
@@ -65,7 +68,7 @@ pub fn render_stipple_based(
     for (((image, implement_diameter_in_pixels), color), mut voronoi_sites) in class_images
         .axis_iter(Axis(0))
         .zip(implement_diameters_in_pixels.iter())
-        .zip(colors.into_iter())
+        .zip(colors.iter())
         .zip(class_to_sites.into_iter())
     {
         // On the off chance 2 sites end up being the same...
@@ -210,9 +213,9 @@ fn run_mlbg_stippling(
         let remove_threshold = 1. - current_hysteresis / 2.;
         let split_threshold = 1. + current_hysteresis / 2.;
 
-        debug!("Computing global cell centroids");
+        debug!("Computing global cell centroids of all sites");
 
-        let class_to_site_global_centroids = {
+        let class_to_site_to_global_centroids = {
             let mut acc = class_to_sites
                 .iter()
                 .map(|voronoi_sites| vec![None; voronoi_sites.len()])
@@ -220,7 +223,7 @@ fn run_mlbg_stippling(
             let global_sites = class_to_sites
                 .iter()
                 .enumerate()
-                .map(|(i, voronoi_sites)| {
+                .flat_map(|(i, voronoi_sites)| {
                     voronoi_sites
                         .iter()
                         .copied()
@@ -230,7 +233,6 @@ fn run_mlbg_stippling(
                             annotation: (i, j),
                         })
                 })
-                .flatten()
                 .collect::<Vec<_>>();
             let global_colored_pixels = jump_flooding_voronoi(&global_sites, [width, height]);
             let global_sites_to_points =
@@ -239,10 +241,11 @@ fn run_mlbg_stippling(
                 .into_iter()
                 .zip(global_sites.iter())
                 .for_each(|(points, annotated_site)| {
+                    // Calculate the centroid of the points in each class and average it
                     let (num_centroids, summed_centroid) = (0..classes)
                         .filter_map(|k| {
                             let class_image = class_images.slice(s![k, .., ..]);
-                            CellProperties::calculate(class_image, &points).centroid
+                            calculate_centroid(class_image, &points)
                         })
                         .fold(
                             (0, ZERO),
@@ -261,45 +264,45 @@ fn run_mlbg_stippling(
             acc
         };
 
-        let changed = AtomicBool::new(false);
+        let changed = Once::new();
         // Don't parallelize outer loop b/c inner loop already uses all cores
         class_to_sites = (0..classes)
-            .into_par_iter()
-            .map(|k| (k,class_images.slice(s![k, .., ..])))
-            .zip(implement_areas.par_iter())
-            .zip(class_to_sites.par_iter())
-            .zip(class_to_site_global_centroids.par_iter())
+            // .into_par_iter()
+            .map(|k| (k, class_images.slice(s![k, .., ..])))
+            .zip(implement_areas.iter())
+            .zip(class_to_sites.iter())
+            .zip(class_to_site_to_global_centroids.iter())
+            // .map(|k| (k,class_images.slice(s![k, .., ..])))
+            // .zip(implement_areas.par_iter())
+            // .zip(class_to_sites.par_iter())
+            // .zip(class_to_site_to_global_centroids.par_iter())
             .map(
-                |((((k, class_image), implement_area), sites), site_global_centroids)| {
+                |((((k, class_image), implement_area), sites), site_to_global_centroid)| {
                     if sites.is_empty() {
                         return vec![];
                     }
                     debug!("JFA class {k}");
-                    let colored_pixels = jump_flooding_voronoi(&sites, [width, height]);
-                    let sites_to_points = colors_to_assignments(&sites, colored_pixels.view());
+                    let colored_pixels = jump_flooding_voronoi(sites, [width, height]);
+                    let site_to_points = colors_to_assignments(sites, colored_pixels.view());
                     debug!("Assign class {k}");
                     sites
                         .par_iter()
-                        .zip(sites_to_points.par_iter())
-                        .zip(site_global_centroids.par_iter())
+                        .zip(site_to_points.par_iter())
+                        .zip(site_to_global_centroid.par_iter())
                         .map(|((site, points), global_centroid)| {
                             let mut rng = thread_rng();
-                            let cell_properties =
-                            CellProperties::calculate(class_image.view(), points);
+                            let cell_properties = CellProperties::calculate(class_image.view(), points);
                             let moments = &cell_properties.moments;
 
                             // Density is very low, remove this point early
                             if moments.m00 <= f64::EPSILON {
-                                changed.fetch_or(true, Ordering::Relaxed);
+                                changed.call_once(|| {});
                                 return vec![];
                             }
                             let should_use_global = global_centroid.is_some() && {
                                 kbn_summation! {
-                                    for other_class_cell_properties in (0..classes).map(|k| {
-                                        let other_class_image = class_images.slice(s![k, .., ..]);
-                                        CellProperties::calculate(other_class_image, &points)
-                                    }) => {
-                                        sum_class_densities += other_class_cell_properties.moments.m00 / points.len() as f64;
+                                    for class_image in (0..classes).map(|k| class_images.slice(s![k, .., ..])) => {
+                                        sum_class_densities += calculate_density(class_image, points);
                                     }
                                 }
                                 let average_density = cell_properties.moments.m00 / points.len() as f64;
@@ -318,7 +321,7 @@ fn run_mlbg_stippling(
                             ) {
                                 // Below remove threshold, remove point
                                 (true, _, _) => {
-                                    changed.fetch_or(true, Ordering::Relaxed);
+                                    changed.call_once(|| {});
                                     vec![]
                                 }
                                 // Below split threshold, keep as centroid
@@ -328,7 +331,9 @@ fn run_mlbg_stippling(
                                         .round()
                                         .cast::<i64>()
                                         .to_array();
-                                    changed.fetch_or(*site != new_site, Ordering::Relaxed);
+                                    if *site != new_site {
+                                        changed.call_once(|| {});
+                                    }
                                     vec![new_site]
                                 }
                                 // Above split threshold, split along phi from the centroid
@@ -349,7 +354,7 @@ fn run_mlbg_stippling(
                                         .cast::<i64>()
                                         .to_array();
 
-                                    changed.fetch_or(true, Ordering::Relaxed);
+                                    changed.call_once(|| {});
                                     if left == right {
                                         warn!(
                                             "Splitting a point produced the same point: {:?}",
@@ -375,7 +380,7 @@ fn run_mlbg_stippling(
                 .map(|sites| sites.len())
                 .sum::<usize>()
         );
-        if !changed.load(Ordering::Relaxed) {
+        if !changed.is_completed() {
             break;
         }
     }
