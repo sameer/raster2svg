@@ -110,7 +110,7 @@ where
                         (larger_group_fmin - group_fmin) / (larger_group_size - group_size)
                     },
                 )
-                .min_by(|a, b| a.partial_cmp(&b).unwrap());
+                .min_by(|a, b| a.partial_cmp(b).unwrap());
             let maximum_smaller_diff = rectangles_by_size[..i]
                 .iter()
                 .map(
@@ -122,7 +122,7 @@ where
                         (group_fmin - smaller_group_fmin) / (group_size - smaller_group_size)
                     },
                 )
-                .max_by(|a, b| a.partial_cmp(&b).unwrap());
+                .max_by(|a, b| a.partial_cmp(b).unwrap());
 
             let is_potentially_optimal = if let Some(minimum_larger_diff) = minimum_larger_diff {
                 // Lemma 3.3 (7)
@@ -168,14 +168,13 @@ where
                 potentially_optimal.push(group.rectangles.remove(j));
             }
             if group.rectangles.is_empty() {
-                drop(group);
                 rectangles_by_size.remove(i);
             } else {
                 group.fmin = group
                     .rectangles
                     .iter()
                     .map(|r| r.fmin)
-                    .min_by(|a, b| a.partial_cmp(&b).unwrap())
+                    .min_by(|a, b| a.partial_cmp(b).unwrap())
                     .unwrap();
             }
         }
@@ -238,7 +237,7 @@ where
         // for each j, find wj = min(c - δ_ej, c + δ_ej)
         // indices
         let w_values = f_c_δ_e.map_axis(Axis(1), |x| {
-            *x.iter().min_by(|a, b| a.partial_cmp(&b).unwrap()).unwrap()
+            *x.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap()
         });
 
         // Divide starting with the dimension with the smallest (best) wj
