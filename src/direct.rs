@@ -36,10 +36,16 @@ where
     pub fn run(&self) -> (Array1<f64>, f64) {
         let mut rectangles_by_size: Vec<Group> = vec![];
         let mut num_evaluations = 0;
+        let mut num_iterations = 0;
         let (mut xmin, mut fmin) = self.initialize(&mut rectangles_by_size, &mut num_evaluations);
-        for _it in 0..self.max_iterations.unwrap_or(usize::MAX) {
+        loop {
             if let Some(max_evaluations) = self.max_evaluations {
                 if num_evaluations >= max_evaluations {
+                    break;
+                }
+            }
+            if let Some(max_iterations) = self.max_iterations {
+                if num_iterations >= max_iterations {
                     break;
                 }
             }
@@ -56,6 +62,7 @@ where
                     fmin = split_fmin;
                 }
             }
+            num_iterations += 1;
         }
         (self.denormalize_point(xmin), fmin)
     }
