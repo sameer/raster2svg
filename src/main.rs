@@ -5,10 +5,7 @@ use image::io::Reader as ImageReader;
 #[cfg(debug)]
 use image::{Rgb, RgbImage};
 use log::*;
-use lyon_geom::{
-    euclid::default::{Vector2D, Vector3D},
-    Angle,
-};
+use lyon_geom::{euclid::default::Vector3D, Angle};
 use ndarray::{prelude::*, SliceInfo, SliceInfoElem};
 use num_traits::{PrimInt, Signed};
 use rustc_hash::FxHashMap;
@@ -312,7 +309,9 @@ fn main() -> io::Result<()> {
                 .cylindrical_single(opt.color_model.convert_single(&Color::from([1.; 3])));
             image_in_cylindrical_color_model
                 .slice_mut(s![2, .., ..])
-                .mapv_inplace(|lightness| white_in_cylindrical_color_model[2] - lightness);
+                .mapv_inplace(|lightness| {
+                    (white_in_cylindrical_color_model[2] - lightness).max(0.)
+                });
             implements_in_cylindrical_color_model
                 .iter_mut()
                 .for_each(|[_, _, lightness]| {
@@ -326,8 +325,7 @@ fn main() -> io::Result<()> {
                     Vector3D::new(cos * magnitude, sin * magnitude, darkness)
                 })
                 .collect::<Vec<_>>();
-
-            let mut cached_colors = FxHashMap::default();
+            // let mut cached_colors = FxHashMap::default();
             for y in 0..height {
                 dbg!(y);
                 for x in 0..width {
@@ -336,73 +334,31 @@ fn main() -> io::Result<()> {
                         .to_vec()
                         .try_into()
                         .unwrap();
-                    let best = cached_colors
-                        .entry([
-                            desired[0].to_bits(),
-                            desired[1].to_bits(),
-                            desired[2].to_bits(),
-                        ])
-                        .or_insert_with(|| {
-                            // Find an optimal linear combination of the palette
 
-                            let max_angle = match opt.color_model {
-                                ColorModel::Cielab => std::f64::consts::FRAC_PI_2,
-                                ColorModel::Rgb => std::f64::consts::FRAC_PI_3 * 2.,
-                            };
-
-                            // (0..implement_hue_vectors.len()).collect::<Vec<_>>();
-                            let allowed_hue_indices = implement_hue_vectors
+                    let direct = Direct {
+                        epsilon: 1E-4,
+                        max_evaluations: None,
+                        max_iterations: Some(100),
+                        // max_evaluations: Some(1000),
+                        // max_iterations: None,
+                        initial: Array::zeros(implement_hue_vectors.len()),
+                        bounds: Array::from_elem(implement_hue_vectors.len(), [0., 1.]),
+                        function: |param: ArrayView1<f64>| {
+                            let weighted_vector = param
                                 .iter()
-                                .enumerate()
-                                .filter(|(_, p)| {
-                                    let chroma = p.to_2d();
-                                    let (sin, cos) = desired[0].sin_cos();
-                                    let desired_chroma =
-                                        Vector2D::new(cos * desired[1], sin * desired[1]);
-                                    let zero = Vector2D::zero();
+                                .zip(implement_hue_vectors.iter())
+                                .fold(Vector3D::zero(), |acc, (p, i)| acc + *i * *p);
+                            // Convert back to cylindrical model (hue, chroma, darkness)
+                            let actual = [
+                                weighted_vector.y.atan2(weighted_vector.x),
+                                weighted_vector.to_2d().length(),
+                                weighted_vector.z,
+                            ];
+                            opt.color_model.cylindrical_diff(desired, actual)
+                        },
+                    };
 
-                                    chroma == zero
-                                        || desired_chroma == zero
-                                        || chroma.angle_to(desired_chroma).radians.abs()
-                                            <= max_angle
-                                })
-                                .map(|(i, _)| i)
-                                .collect::<Vec<_>>();
-                            if allowed_hue_indices.is_empty() {
-                                return Array1::zeros(implements);
-                            }
-
-                            let direct = Direct {
-                                epsilon: 1E-4,
-                                max_evaluations: Some(10000),
-                                max_iterations: None,
-                                initial: Array::zeros(allowed_hue_indices.len()),
-                                bounds: Array::from_elem(allowed_hue_indices.len(), [0., 1.]),
-                                function: |param: ArrayView1<f64>| {
-                                    let weighted_vector = allowed_hue_indices
-                                        .iter()
-                                        .map(|i| implement_hue_vectors[*i])
-                                        .zip(param.iter())
-                                        .map(|(p, x)| p * *x)
-                                        .sum::<Vector3D<f64>>();
-                                    // Convert back to cylindrical model (hue, chroma, darkness)
-                                    let actual = [
-                                        weighted_vector.y.atan2(weighted_vector.x),
-                                        weighted_vector.to_2d().length(),
-                                        weighted_vector.z,
-                                    ];
-                                    opt.color_model.cylindrical_diff(actual, desired)
-                                    //+ (actual[2] - desired[2]).abs()
-                                },
-                            };
-
-                            let (best, best_cost) = direct.run();
-                            let mut amended_best = Array::zeros(implements);
-                            for (i, val) in allowed_hue_indices.into_iter().zip(best.iter()) {
-                                amended_best[i] = *val;
-                            }
-                            amended_best
-                        });
+                    let (best, _best_cost) = direct.run();
 
                     image_in_implements
                         .slice_mut(s![.., x, y])
