@@ -536,7 +536,11 @@ fn to_svg<T: PrimInt + Debug>(
     );
     let mut intersections = String::default();
     for Point { x: tox, y: toy, .. } in edge_intersections_with_phi_line {
-        write!(intersections, r#"<circle stroke="blue" cx="{tox}" cy="{toy}" r="0.5"/>"#).unwrap();
+        write!(
+            intersections,
+            r#"<circle stroke="blue" cx="{tox}" cy="{toy}" r="0.5"/>"#
+        )
+        .unwrap();
     }
     let width = maxx - minx;
     let height = maxy - miny;

@@ -33,10 +33,7 @@ impl Dither for FloydSteinberg {
         image: ArrayView3<f64>,
         palette: &[[f64; N]],
     ) -> Array2<usize> {
-        let palette_as_array = palette
-            .iter()
-            .map(ArrayView::from)
-            .collect::<Vec<_>>();
+        let palette_as_array = palette.iter().map(ArrayView::from).collect::<Vec<_>>();
         let (_colors, width, height) = image.dim();
 
         let mut dithered = Array2::zeros((width, height));
