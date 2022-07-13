@@ -19,9 +19,6 @@ use log::{debug, info, warn};
 use lyon_geom::{point, Point};
 use ndarray::prelude::*;
 use rand::{thread_rng, Rng};
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
-};
 use spade::delaunay::IntDelaunayTriangulation;
 
 pub fn render_fdog_based(
