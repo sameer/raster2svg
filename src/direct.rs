@@ -151,25 +151,30 @@ where
             };
 
             if is_potentially_optimal {
-                let mut group = &mut rectangles_by_size[i];
+                let group = &mut rectangles_by_size[i];
                 // Lemma 3.3 (6)
                 for j in (0..group.rectangles.len()).rev() {
                     if (group.rectangles[j].fmin - group.fmin).abs() < f64::EPSILON {
                         potentially_optimal.push(group.rectangles.remove(j));
                     }
                 }
-                if group.rectangles.is_empty() {
-                    rectangles_by_size.remove(i);
-                } else {
-                    group.fmin = group
-                        .rectangles
-                        .iter()
-                        .map(|r| r.fmin)
-                        .min_by(|a, b| a.partial_cmp(b).unwrap())
-                        .unwrap();
-                }
             }
         }
+
+        for i in (0..rectangles_by_size.len()).rev() {
+            let group = &mut rectangles_by_size[i];
+            if group.rectangles.is_empty() {
+                rectangles_by_size.remove(i);
+            } else {
+                group.fmin = group
+                    .rectangles
+                    .iter()
+                    .map(|r| r.fmin)
+                    .min_by(|a, b| a.partial_cmp(b).unwrap())
+                    .unwrap();
+            }
+        }
+
         potentially_optimal
     }
 
