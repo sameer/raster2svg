@@ -4,7 +4,12 @@ use spade::{
     delaunay::{DelaunayTreeLocate, IntDelaunayTriangulation},
     SpadeNum,
 };
-use std::{cmp::Reverse, collections::BinaryHeap, fmt::Debug, hash::Hash};
+use std::{
+    cmp::Reverse,
+    collections::BinaryHeap,
+    fmt::Debug,
+    hash::{BuildHasherDefault, Hash},
+};
 
 use crate::math::abs_distance_squared;
 
@@ -41,30 +46,31 @@ pub fn compute_mst<T>(
 where
     T: PrimInt + Signed + FromPrimitive + Hash + Debug + SpadeNum,
 {
-    let mut edges_by_vertex: HashMap<_, Vec<_>> = HashMap::default();
-    edges_by_vertex.reserve(delaunay.num_vertices());
-    delaunay.vertices().for_each(|vertex| {
-        vertex.ccw_out_edges().for_each(|edge| {
-            let from = *edge.from();
-            let to = *edge.to();
-            edges_by_vertex
-                .entry(from)
-                .or_default()
-                .push(PriorityQueueEdge { from, to });
-        });
-    });
+    let edges_by_vertex: HashMap<_, Vec<_>> = delaunay
+        .vertices()
+        .map(|vertex| {
+            let from = *vertex;
+            (
+                from,
+                vertex
+                    .ccw_out_edges()
+                    .map(|edge| {
+                        let to = *edge.to();
+                        PriorityQueueEdge { from, to }
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
 
-    let mut in_mst = HashSet::default();
-    in_mst.reserve(points.len());
+    let mut in_mst = HashSet::with_capacity_and_hasher(points.len(), BuildHasherDefault::default());
     let mut edge_priority_queue = BinaryHeap::new();
 
     // Kickstart MST with 1 vertex
     if !points.is_empty() {
         let first_vertex = points[0];
         in_mst.insert(first_vertex);
-        for edge in &edges_by_vertex[&first_vertex] {
-            edge_priority_queue.push(Reverse(edge));
-        }
+        edge_priority_queue.extend(edges_by_vertex[&first_vertex].iter().map(Reverse));
     }
 
     let mut mst = Vec::with_capacity(points.len().saturating_sub(1));
@@ -81,12 +87,12 @@ where
                 in_mst.insert(*to);
                 mst.push([shortest_edge.0.from, shortest_edge.0.to]);
 
-                for edge in &edges_by_vertex[&shortest_edge.0.to] {
-                    if in_mst.contains(&edge.to) {
-                        continue;
-                    }
-                    edge_priority_queue.push(Reverse(edge));
-                }
+                edge_priority_queue.extend(
+                    edges_by_vertex[&shortest_edge.0.to]
+                        .iter()
+                        .filter(|edge| !in_mst.contains(&edge.to))
+                        .map(Reverse),
+                );
                 if mst.len() == points.len().saturating_sub(1) {
                     // Early stopping condition, MST already has all the edges
                     break;
@@ -99,7 +105,7 @@ where
 
 #[cfg(test)]
 #[test]
-fn mst_is_correct_for_trivial_case() {
+fn test_mst_is_correct_for_trivial_case() {
     let mut delaunay = IntDelaunayTriangulation::new();
     let points = [[0, 0], [1, 1], [2, 2]];
     for point in &points {
