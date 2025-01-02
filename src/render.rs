@@ -206,7 +206,7 @@ pub fn render_stipple_based(
         Style::Triangulation | Style::Mst | Style::Tsp => {
             let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
             for vertex in &voronoi_sites {
-                delaunay.insert([vertex[0] as i64, vertex[1] as i64]);
+                delaunay.insert([vertex[0], vertex[1]]);
             }
 
             if let Style::Triangulation = style {

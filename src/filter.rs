@@ -171,7 +171,7 @@ pub fn flow_based_difference_of_gaussians(
                         }
                     }
                 }
-                *i_x /= f_t_sum as f64;
+                *i_x /= f_t_sum;
             });
 
         let mut h = Array2::<f64>::zeros((width, height));
@@ -232,7 +232,7 @@ pub fn flow_based_difference_of_gaussians(
                         }
                     }
                 }
-                *h_x /= g_m_sum as f64;
+                *h_x /= g_m_sum;
             });
 
         par_azip! {

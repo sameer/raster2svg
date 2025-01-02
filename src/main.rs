@@ -566,7 +566,7 @@ pub(crate) fn get_slice_info_for_offset(
     y: i32,
 ) -> SliceInfo<[SliceInfoElem; 2], Dim<[usize; 2]>, Dim<[usize; 2]>> {
     match (x.signum(), y.signum()) {
-        (-1, -1) => (s![..x, ..y]),
+        (-1, -1) => s![..x, ..y],
         (0, -1) => s![.., ..y],
         (-1, 0) => s![..x, ..],
         (0, 0) => s![.., ..],
