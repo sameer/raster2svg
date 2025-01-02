@@ -1,4 +1,4 @@
-use crate::abs_distance_squared;
+use crate::math::abs_distance_squared;
 use bitvec::prelude::*;
 use log::*;
 use num_traits::{FromPrimitive, PrimInt, Signed};

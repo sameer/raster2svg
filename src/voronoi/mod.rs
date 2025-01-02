@@ -9,7 +9,7 @@ use ndarray::{par_azip, prelude::*};
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rustc_hash::FxHashSet as HashSet;
 
-use crate::{abs_distance_squared, get_slice_info_for_offset};
+use crate::{get_slice_info_for_offset, math::abs_distance_squared};
 
 mod hull;
 
@@ -450,7 +450,7 @@ fn to_svg<T: PrimInt + Debug>(
 #[cfg(test)]
 mod tests {
     use super::jump_flooding_voronoi;
-    use crate::abs_distance_squared;
+    use crate::math::abs_distance_squared;
 
     #[test]
     fn test_jump_flooding_voronoi() {

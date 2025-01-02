@@ -6,6 +6,8 @@ use spade::{
 };
 use std::{cmp::Reverse, collections::BinaryHeap, fmt::Debug, hash::Hash};
 
+use crate::math::abs_distance_squared;
+
 #[derive(PartialEq, Eq, Hash, Debug)]
 struct PriorityQueueEdge<T: PrimInt + PartialEq + Eq + PartialOrd + Ord> {
     from: [T; 2],
@@ -17,8 +19,8 @@ impl<T: PrimInt + Signed + PartialEq + Eq + PartialOrd + Ord + Debug> PartialOrd
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(
-            crate::abs_distance_squared(self.from, self.to)
-                .cmp(&crate::abs_distance_squared(other.from, other.to)),
+            abs_distance_squared(self.from, self.to)
+                .cmp(&abs_distance_squared(other.from, other.to)),
         )
     }
 }
