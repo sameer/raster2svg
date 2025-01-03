@@ -1,4 +1,3 @@
-use lyon_geom::Angle;
 use ndarray::prelude::*;
 use ndarray::Array3;
 use std::fmt;
