@@ -209,7 +209,6 @@ fn approximate_tsp_with_mst_greedy<
         .enumerate()
         .find(|(_, adjacencies)| adjacencies.len() == 1)
         .expect("path always has a first vertex");
-
     path.push(first_vertex);
     path.push(*adjacencies.iter().next().unwrap());
 
@@ -309,12 +308,12 @@ fn local_improvement_with_tabu_search<
     let mut tabu_set: HashSet<usize> = HashSet::default();
     tabu_set.reserve(tabu_capacity);
 
-    let mut stuck_operators = HashSet::default();
+    let mut stuck_operators = HashSet::with_capacity_and_hasher(3, BuildHasherDefault::default());
 
     for idx in 0..ITERATIONS {
         if stuck_operators.len() == Operator::NUM_OPERATORS && !SHOULD_SAMPLE {
             if tabu.is_empty() {
-                info!("Stuck!");
+                info!("Stuck, no more local improvements can be made");
                 break;
             } else {
                 // Try to unstick by clearing tabu
@@ -356,7 +355,7 @@ fn local_improvement_with_tabu_search<
                             + current_distances[i])
                             - abs_distance_squared(current[i - 1], current[i + 1]);
                         // j must be in [0, i-2] U [i+1, N-1] for the move to be valid
-                        (0..i.saturating_sub(2))
+                        (0..i.saturating_sub(1))
                             .into_par_iter()
                             .chain(
                                 (i.saturating_add(1)..current.len().saturating_sub(1))
