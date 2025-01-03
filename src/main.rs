@@ -4,7 +4,6 @@ use dither::{Dither, FloydSteinberg};
 use image::ImageReader;
 #[cfg(debug_assertions)]
 use image::{Rgb, RgbImage};
-use log::*;
 use ndarray::{prelude::*, SliceInfo, SliceInfoElem};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,6 +15,7 @@ use std::{
     str::FromStr,
     vec,
 };
+use tracing::{info, level_filters::LevelFilter, warn};
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
@@ -189,7 +189,13 @@ fn main() -> io::Result<()> {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "raster2svg=info")
     }
-    env_logger::init();
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_max_level(LevelFilter::DEBUG)
+            .compact()
+            .finish(),
+    )
+    .unwrap();
 
     let ref opt @ Opt {
         ref file,

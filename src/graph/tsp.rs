@@ -1,5 +1,4 @@
 use crate::math::abs_distance_squared;
-use log::*;
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rand::{distributions::Standard, prelude::Distribution, thread_rng, Rng};
 use rayon::prelude::*;
@@ -10,6 +9,7 @@ use std::{
     hash::{BuildHasherDefault, Hash},
     iter::Sum,
 };
+use tracing::{debug, info};
 
 #[derive(PartialEq, Eq, Debug)]
 struct Edge<T: Debug>([[T; 2]; 2]);

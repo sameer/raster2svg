@@ -12,11 +12,11 @@ use crate::{
     Style,
 };
 use cairo::{Context, LineCap, LineJoin, Matrix};
-use log::{debug, info, warn};
 use lyon_geom::{point, Point};
 use ndarray::prelude::*;
 use rand::{thread_rng, Rng};
 use spade::delaunay::IntDelaunayTriangulation;
+use tracing::{debug, info, warn};
 
 pub fn render_fdog_based(
     image: ArrayView2<f64>,

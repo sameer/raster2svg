@@ -2,11 +2,11 @@ use std::fmt::{Debug, Write};
 use std::hash::Hash;
 use std::io::Write as IoWrite;
 
-use log::info;
 use lyon_geom::{euclid::Vector2D, point, Angle, Line, LineSegment, Point, Vector};
 use ndarray::{par_azip, prelude::*, IxDyn};
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rustc_hash::FxHashSet as HashSet;
+use tracing::info;
 
 use crate::{get_slice_info_for_offset, kbn_summation, math::abs_distance_squared};
 

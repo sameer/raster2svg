@@ -1,5 +1,6 @@
 use lyon_geom::euclid::default::Vector3D;
 use ndarray::{s, Array, Array3, ArrayView1, ArrayView3};
+use tracing::debug;
 
 use crate::{optimize::direct::Direct, ColorModel};
 
@@ -43,7 +44,7 @@ impl ColorModel {
         let mut image_in_implements = Array3::<f64>::zeros((palette.len(), width, height));
         // let mut cached_colors = FxHashMap::default();
         for y in 0..height {
-            dbg!(y);
+            debug!(y);
             for x in 0..width {
                 let desired: [f64; 3] = image_in_cylindrical_color_model
                     .slice(s![.., x, y])

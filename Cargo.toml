@@ -13,13 +13,7 @@ cairo-rs = { version = "^0", default-features = false, features = [
     "v1_16",
 ] }
 clap = { version = "4", features = ["derive"] }
-env_logger = { version = "0", default-features = false, features = [
-    "atty",
-    "termcolor",
-    "humantime",
-] }
 image = { version = "0", features = ["jpeg", "png", "tiff", "bmp"] }
-log = "0"
 lyon_geom = "0"
 ndarray = { version = "0", features = ["rayon", "serde"] }
 ndarray-stats = "0"
@@ -32,6 +26,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "1"
 spade = "1"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
 uom = { version = "0", features = ["use_serde"] }
 
 [dev-dependencies]
