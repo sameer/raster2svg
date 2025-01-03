@@ -18,7 +18,7 @@ env_logger = { version = "0", default-features = false, features = [
     "termcolor",
     "humantime",
 ] }
-image = { version = "0.23", features = ["jpeg", "png", "tiff", "bmp"] }
+image = { version = "0", features = ["jpeg", "png", "tiff", "bmp"] }
 log = "0"
 lyon_geom = "0.17"
 ndarray = { version = "0.15", features = ["rayon", "serde"] }

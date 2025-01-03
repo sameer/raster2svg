@@ -1,7 +1,7 @@
 use cairo::{Context, Matrix, SvgUnit};
 use clap::{Parser, ValueEnum};
 use dither::{Dither, FloydSteinberg};
-use image::io::Reader as ImageReader;
+use image::ImageReader;
 #[cfg(debug_assertions)]
 use image::{Rgb, RgbImage};
 use log::*;
