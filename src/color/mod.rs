@@ -15,6 +15,7 @@ impl ColorModel {
             ColorModel::Rgb => rgb.to_owned(),
         }
     }
+
     pub fn convert_single(&self, color: &Color) -> [f64; 3] {
         let rgb = a_to_nd(color.as_ref());
         nd_to_a::<3>(match self {
@@ -29,6 +30,7 @@ impl ColorModel {
             ColorModel::Rgb => srgb_to_hsl(image),
         }
     }
+
     pub fn cylindrical_single(&self, color: [f64; 3]) -> [f64; 3] {
         let color = a_to_nd(&color);
         nd_to_a(match self {

@@ -1,4 +1,3 @@
-use crate::{color::Color, direct::Direct};
 use cairo::{Context, Matrix, SvgUnit};
 use dither::{Dither, FloydSteinberg};
 use image::io::Reader as ImageReader;
@@ -21,11 +20,12 @@ use structopt::StructOpt;
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
+use crate::color::Color;
+use crate::optimize::direct::Direct;
 use crate::render::render_stipple_based;
 
 /// Adjust image color
 mod color;
-mod direct;
 /// Dither an image given a predefined set of colors
 mod dither;
 /// Image filter algorithms (i.e. Sobel operator, FDoG, ETF)
@@ -36,6 +36,8 @@ mod graph;
 mod lsd;
 /// Pure math routines
 mod math;
+/// Optimization algorithms
+mod optimize;
 /// Routines for creating the final SVG using [Cairo](cairographics.org)
 mod render;
 /// Construct the [Voronoi diagram](https://en.wikipedia.org/wiki/Voronoi_diagram) and calculate related properties
@@ -243,7 +245,7 @@ fn main() -> io::Result<()> {
         .iter()
         .map(|implement| {
             if let Implement::Pen { color, .. } = implement {
-                color
+                *color
             } else {
                 unimplemented!()
             }
@@ -285,7 +287,7 @@ fn main() -> io::Result<()> {
                         continue;
                     }
                     #[cfg(debug_assertions)]
-                    buf.put_pixel(x as u32, y as u32, Rgb((*colors[k]).into()));
+                    buf.put_pixel(x as u32, y as u32, Rgb((colors[k]).into()));
                     image_in_implements[[k, x, y]] = 1.0;
                 }
             }
