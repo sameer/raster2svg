@@ -32,7 +32,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "1.12"
 spade = "1.8"
-uom = { version = "0.32", features = ["use_serde"] }
+uom = { version = "0", features = ["use_serde"] }
 
 [dev-dependencies]
 pretty_assertions = "1.2"
