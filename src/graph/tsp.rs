@@ -1,5 +1,4 @@
 use crate::math::abs_distance_squared;
-use bitvec::prelude::*;
 use log::*;
 use num_traits::{FromPrimitive, PrimInt, Signed};
 use rand::{distributions::Standard, prelude::Distribution, thread_rng, Rng};
@@ -328,7 +327,7 @@ fn local_improvement_with_tabu_search<
         match operator {
             // O(v^2)
             Operator::Relocate => {
-                // Which i should be considered for relocation
+                // Which i should be considered for relocation (i in [1, N-2])
                 let relocates = if SHOULD_SAMPLE {
                     0..sample_count
                 } else {
@@ -346,7 +345,7 @@ fn local_improvement_with_tabu_search<
                 // move i between j and j+1
                 let best = relocates
                     .filter(|i| !tabu_set.contains(i))
-                    .map(|i| {
+                    .flat_map(|i| {
                         // pre-computed to save time,
                         // relies on triangle property to avoid overflow:
                         // distance from i-1 --> i --> i+1 is strictly greater than
@@ -363,7 +362,6 @@ fn local_improvement_with_tabu_search<
                             )
                             .map(move |j| (i, j, unlink_i_improvement))
                     })
-                    .flatten()
                     .map(|(i, j, unlink_i_improvement)| {
                         // Old distances - pre-computed new distance: (j=>j+1, i-1=>i, i=>i+1) - i-1=>i+1
                         let positive_diff = current_distances[j] + unlink_i_improvement;
@@ -382,7 +380,7 @@ fn local_improvement_with_tabu_search<
                         stuck_operators.clear();
                     }
                     let vertex = current[i];
-                    if j + 1 < i {
+                    if j < i {
                         // j is before i in the path
                         // shift to the right and insert vertex
                         for idx in (j + 1..i).rev() {
@@ -421,27 +419,32 @@ fn local_improvement_with_tabu_search<
                         i
                     }
                 })
-                .map(|i| (i, i.saturating_add(1)));
+                .map(|i| (i, i + 1));
                 // permute the points of the this and other edges
                 let best = edges
-                    .map(|(i, j)| {
-                        (0..i)
+                    .flat_map(|(i, j)| {
+                        (1..i)
                             .into_par_iter()
-                            .zip((1..i).into_par_iter())
+                            .map(move |other_j| {
+                                let other_i = other_j - 1;
+                                (other_i, other_j)
+                            })
                             // Note that other and (i,j) are swapped so that
-                            // the this edge is always before the other edge
+                            // the first edge is always before the second edge
                             .map(move |other| (other, (i, j)))
                             // If we aren't sampling, it is pointless to use these because
                             // we already saw them.
                             .filter(|_| SHOULD_SAMPLE)
                             .chain(
-                                (j.saturating_add(1)..current.len())
+                                (j.saturating_add(2)..current.len())
                                     .into_par_iter()
-                                    .zip((j.saturating_add(2)..current.len()).into_par_iter())
+                                    .map(move |other_j| {
+                                        let other_i = other_j - 1;
+                                        (other_i, other_j)
+                                    })
                                     .map(move |other| ((i, j), other)),
                             )
                     })
-                    .flatten()
                     .filter(|(this, other)| {
                         !tabu_set.contains(&this.1) && !tabu_set.contains(&other.0)
                     })
@@ -471,6 +474,7 @@ fn local_improvement_with_tabu_search<
                     let tabu_add = [this.1, other.0];
                     tabu.extend(tabu_add);
                     tabu_set.extend(tabu_add);
+                    // Reversing in-place maintains inner links, but swaps outer links
                     current[this.1..=other.0].reverse();
                 } else {
                     stuck_operators.insert(operator);
@@ -482,10 +486,13 @@ fn local_improvement_with_tabu_search<
                 let first = *current.first().unwrap();
                 let last = *current.last().unwrap();
 
-                // Change from=>to to from=>last, first=>to, or first=>last
-                let best = (1..current.len())
+                // Change from=>to to one of from=>last, first=>to, or first=>last
+                let best = (2..current.len().saturating_sub(1))
                     .into_par_iter()
-                    .zip((2..current.len().saturating_sub(1)).into_par_iter())
+                    .map(|j| {
+                        let i = j - 1;
+                        (i, j)
+                    })
                     .filter(|(i, j)| !tabu_set.contains(i) && !tabu_set.contains(j))
                     .map(|(i, j)| {
                         let from = current[i];
@@ -498,8 +505,8 @@ fn local_improvement_with_tabu_search<
                                 (i, j, [from, to], *new_edge, diff)
                             })
                             .max_by_key(|(.., diff)| *diff)
+                            .expect("array is not empty")
                     })
-                    .flatten()
                     .max_by_key(|(.., diff)| *diff);
 
                 if let Some((i, j, original_edge, new_edge, diff)) = best {
@@ -512,16 +519,14 @@ fn local_improvement_with_tabu_search<
 
                     // Change from=>to to first=>____
                     if new_edge[0] != original_edge[0] {
-                        let tabu_add = [i];
-                        tabu.extend(tabu_add);
-                        tabu_set.extend(tabu_add);
+                        tabu.push_back(i);
+                        tabu_set.insert(i);
                         current[..=i].reverse();
                     }
                     // Change from=>to to ____=>last
                     if new_edge[1] != original_edge[1] {
-                        let tabu_add = [j];
-                        tabu.extend(tabu_add);
-                        tabu_set.extend(tabu_add);
+                        tabu.push_back(j);
+                        tabu_set.insert(j);
                         current[j..].reverse();
                     }
                 } else {
@@ -539,6 +544,10 @@ fn local_improvement_with_tabu_search<
             .collect::<Vec<_>>();
         current_sum = current_distances.iter().copied().sum::<T>();
 
+        debug_assert_eq!(
+            current.len(),
+            current.iter().copied().collect::<HashSet<_>>().len()
+        );
         assert!(
             prev_sum > current_sum,
             "operator = {:?} prev = {:?} current = {:?}",
