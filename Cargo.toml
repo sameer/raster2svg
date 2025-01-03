@@ -8,24 +8,32 @@ description = "Convert raster graphics to stylish SVGs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cairo-rs = { version = "^0", default-features = false, features = ["svg", "v1_16"] }
+cairo-rs = { version = "^0", default-features = false, features = [
+    "svg",
+    "v1_16",
+] }
+clap = { version = "4", features = ["derive"] }
+env_logger = { version = "0", default-features = false, features = [
+    "atty",
+    "termcolor",
+    "humantime",
+] }
 image = { version = "0.23", features = ["jpeg", "png", "tiff", "bmp"] }
-structopt = "0.3"
 log = "0"
-env_logger = { version = "0", default-features = false, features = ["atty", "termcolor", "humantime"] }
-uom = { version = "0.32", features = ["use_serde"] }
-ndarray = { version = "0.15", features = ["rayon", "serde"] }
-rand = { version = "0.8", features = ["alloc"] }
-spade = "1.8"
-rustc-hash = "1.1"
-num-traits = "0.2"
 lyon_geom = "0.17"
-paste = "1"
+ndarray = { version = "0.15", features = ["rayon", "serde"] }
 ndarray-stats = "0.5"
+num-traits = "0.2"
+paste = "1"
+rand = { version = "0.8", features = ["alloc"] }
 rayon = "1.5"
+rustc-hash = "1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "1.12"
+spade = "1.8"
+structopt = "0.3"
+uom = { version = "0.32", features = ["use_serde"] }
 
 [dev-dependencies]
 pretty_assertions = "1.2"

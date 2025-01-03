@@ -1,4 +1,5 @@
 use cairo::{Context, Matrix, SvgUnit};
+use clap::{Parser, ValueEnum};
 use dither::{Dither, FloydSteinberg};
 use image::io::Reader as ImageReader;
 #[cfg(debug_assertions)]
@@ -15,7 +16,6 @@ use std::{
     str::FromStr,
     vec,
 };
-use structopt::StructOpt;
 use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
@@ -41,59 +41,44 @@ mod render;
 /// Construct the [Voronoi diagram](https://en.wikipedia.org/wiki/Voronoi_diagram) and calculate related properties
 mod voronoi;
 
-#[derive(Debug, StructOpt, Deserialize, Serialize)]
-#[structopt(author, about)]
+#[derive(Parser, Debug, Deserialize, Serialize)]
+#[command(author, about)]
 struct Opt {
     /// A path to an image, else reads from stdin
     file: Option<PathBuf>,
 
-    #[structopt(long)]
+    #[arg(long)]
     config: Option<PathBuf>,
 
     /// Determines the scaling of the output SVG
-    #[structopt(long, default_value = "96")]
+    #[arg(long, alias = "dpi", default_value = "96.")]
     dots_per_inch: f64,
 
     /// Color model to use for additive coloring
-    #[structopt(
-        long,
-        default_value = "cielab",
-        possible_values = &ColorModel::raw_variants(),
-        case_insensitive = true
-    )]
+    #[arg(long, default_value = "cielab", ignore_case = true)]
     #[serde(with = "serde_with::rust::display_fromstr")]
     color_model: ColorModel,
 
     /// Coloring method to use
-    #[structopt(
-        long,
-        default_value = "vector",
-        possible_values = &ColorMethod::raw_variants(),
-        case_insensitive = true
-    )]
+    #[arg(long, default_value = "vector", ignore_case = true)]
     #[serde(with = "serde_with::rust::display_fromstr")]
     color_method: ColorMethod,
 
     /// SVG drawing style
-    #[structopt(
-        long,
-        default_value = "mst",
-        possible_values = &Style::raw_variants(),
-        case_insensitive = true
-    )]
+    #[arg(long, default_value = "mst", ignore_case = true)]
     #[serde(with = "serde_with::rust::display_fromstr")]
     style: Style,
 
     /// The drawing implement(s) used by your plotter
-    #[structopt(long = "implement", case_insensitive = true)]
+    #[arg(long = "implement", ignore_case = true)]
     implements: Vec<Implement>,
 
     /// Super-sampling factor for finer detail control
-    #[structopt(long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     super_sample: usize,
 
     /// Output file path (overwrites old files), else writes to stdout
-    #[structopt(short, long)]
+    #[arg(short, long)]
     out: Option<PathBuf>,
 }
 
@@ -105,7 +90,7 @@ macro_rules! opt {
             })?,
         )*
     }) => {
-        #[derive(Debug, Clone, Copy)]
+        #[derive(ValueEnum, Debug, Clone, Copy)]
         pub enum $name {
             $(
                 $variant $({
@@ -115,19 +100,19 @@ macro_rules! opt {
         }
 
         paste::paste! {
-            impl $name {
-                const NUM_VARIANTS: usize = 0 $(
-                    + { let _  = stringify!(Self::$variant); 1 }
-                )*;
+            // impl $name {
+            //     const NUM_VARIANTS: usize = 0 $(
+            //         + { let _  = stringify!(Self::$variant); 1 }
+            //     )*;
 
-                fn raw_variants() -> [&'static str; Self::NUM_VARIANTS] {
-                    [
-                        $(
-                            stringify!([<$variant:snake>]),
-                        )*
-                    ]
-                }
-            }
+            //     fn raw_variants() -> [&'static str; Self::NUM_VARIANTS] {
+            //         [
+            //             $(
+            //                 stringify!([<$variant:snake>]),
+            //             )*
+            //         ]
+            //     }
+            // }
 
             impl std::fmt::Display for $name {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -181,7 +166,7 @@ opt! {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Implement {
     Pen {
         diameter: Length,
@@ -217,7 +202,7 @@ fn main() -> io::Result<()> {
         super_sample: _,
         out: _,
     } = {
-        let mut opt = Opt::from_args();
+        let mut opt = Opt::parse();
 
         if let Some(config) = opt.config {
             let mut config = serde_json::from_reader::<_, Opt>(File::open(&config)?)?;
