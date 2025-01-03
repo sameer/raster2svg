@@ -288,7 +288,7 @@ fn main() -> io::Result<()> {
                             !colors[*i]
                                 .as_ref()
                                 .iter()
-                                .all(|channel| *channel < f64::EPSILON)
+                                .all(|channel| *channel <= f64::EPSILON)
                         })
                         .filter(|(_, color_hue_vector)| {
                             let angle = image_hue_vector.angle_to(**color_hue_vector).radians;
@@ -313,7 +313,7 @@ fn main() -> io::Result<()> {
                             !colors[*i]
                                 .as_ref()
                                 .iter()
-                                .all(|channel| *channel < f64::EPSILON)
+                                .all(|channel| *channel <= f64::EPSILON)
                         })
                         .filter(|(_, color_hue_vector)| {
                             let angle = image_hue_vector.angle_to(**color_hue_vector).radians;
@@ -361,7 +361,7 @@ fn main() -> io::Result<()> {
                     //     .enumerate()
                     // {
                     //     // Black = lightness
-                    //     if c.as_ref().iter().all(|channel| *channel < f64::EPSILON) {
+                    //     if c.as_ref().iter().all(|channel| *channel <= f64::EPSILON) {
                     //         image_in_implements[[i, x, y]] = 1. - hsl[2];
                     //     } else {
                     //         image_in_implements[[i, x, y]] =

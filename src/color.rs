@@ -107,11 +107,11 @@ pub fn srgb_to_hsl(srgb: ArrayView3<f64>) -> Array3<f64> {
         .assign(&srgb.map_axis(Axis(0), |rgb| {
             let v = rgb[0].max(rgb[1]).max(rgb[2]);
             let c = v - rgb[0].min(rgb[1]).min(rgb[2]);
-            if c == 0. {
+            if c <= f64::EPSILON {
                 0.
-            } else if (v - rgb[0]).abs() < f64::EPSILON {
+            } else if (v - rgb[0]).abs() <= f64::EPSILON {
                 std::f64::consts::FRAC_PI_3 * (0. + (rgb[1] - rgb[2]) / c)
-            } else if (v - rgb[1]).abs() < f64::EPSILON {
+            } else if (v - rgb[1]).abs() <= f64::EPSILON {
                 std::f64::consts::FRAC_PI_3 * (2. + (rgb[2] - rgb[0]) / c)
             } else {
                 std::f64::consts::FRAC_PI_3 * (4. + (rgb[0] - rgb[1]) / c)
@@ -124,7 +124,7 @@ pub fn srgb_to_hsl(srgb: ArrayView3<f64>) -> Array3<f64> {
             let c = v - rgb[0].min(rgb[1]).min(rgb[2]);
             let l = v - c / 2.;
 
-            if l.abs() < f64::EPSILON || (l - 1.).abs() < f64::EPSILON {
+            if l.abs() <= f64::EPSILON || (l - 1.).abs() <= f64::EPSILON {
                 0.
             } else {
                 (v - l) / (l.min(1. - l))
