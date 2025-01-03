@@ -234,7 +234,7 @@ fn main() -> io::Result<()> {
             .flat_map(|p| p.0)
             .map(|p| p as f64 / u16::MAX as f64),
     )
-    .into_shape((image.height() as usize, image.width() as usize, 3))
+    .into_shape_clone((image.height() as usize, image.width() as usize, 3))
     .unwrap()
     .reversed_axes();
 

@@ -140,7 +140,7 @@ pub fn jump_flooding_voronoi<
     let positions = Array::from_iter((0..width).flat_map(|x| {
         (0..height).map(move |y| [T::from_usize(x).unwrap(), T::from_usize(y).unwrap()])
     }))
-    .into_shape((width, height))
+    .into_shape_clone((width, height))
     .unwrap();
 
     let mut scratchpad = grid.clone();

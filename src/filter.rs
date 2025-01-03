@@ -109,7 +109,7 @@ pub fn flow_based_difference_of_gaussians(
     let (width, height) = image.dim();
 
     let positions = Array::from_iter((0..width).flat_map(|x| (0..height).map(move |y| [x, y])))
-        .into_shape((width, height))
+        .into_shape_clone((width, height))
         .unwrap();
 
     let mut i = image.to_owned();
@@ -314,7 +314,7 @@ pub fn step_edge_detection(
     let t_range = (NUM_STANDARD_DEVIATIONS * sigma_s).ceil() as usize;
 
     let positions = Array::from_iter((0..width).flat_map(|x| (0..height).map(move |y| [x, y])))
-        .into_shape(image.raw_dim())
+        .into_shape_clone(image.raw_dim())
         .unwrap();
 
     let mut d = Array2::<f64>::zeros(image.raw_dim());
