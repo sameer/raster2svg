@@ -2,6 +2,9 @@ use num_traits::{PrimInt, Signed};
 use std::fmt::Debug;
 
 #[macro_export]
+/// Implementation of the Kahan-Babushka-Neumaier algorithm for reduced numerical error in summation
+///
+/// <https://en.wikipedia.org/wiki/Kahan_summation_algorithm#Further_enhancements>
 macro_rules! kbn_summation {
     (for $pat: pat in $expr: expr => {
         $('loop: { $(let $loopvar: ident = $loopvar_expr: expr;)* })?
@@ -35,16 +38,15 @@ macro_rules! kbn_summation {
 
 /// Square of the Euclidean distance between signed 2D coordinates
 #[inline]
-pub fn abs_distance_squared<T: PrimInt + Signed + Debug>(a: [T; 2], b: [T; 2]) -> T {
-    let x_diff = a[0] - b[0];
-    let y_diff = a[1] - b[1];
-    debug_assert!(
-        x_diff.pow(2).checked_add(&y_diff.pow(2)).is_some(),
-        "x_diff = {:?}, y_diff = {:?}",
-        x_diff,
-        y_diff
-    );
-    x_diff.pow(2) + y_diff.pow(2)
+pub fn abs_distance_squared<T: PrimInt + Signed + Debug, const N: usize>(
+    a: [T; N],
+    b: [T; N],
+) -> T {
+    let mut acc = T::zero();
+    for i in 0..N {
+        acc = acc + (a[i] - b[i]).pow(2);
+    }
+    acc
 }
 
 #[cfg(test)]

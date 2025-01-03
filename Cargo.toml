@@ -2,7 +2,7 @@
 name = "raster2svg"
 version = "0.1.0"
 authors = ["Sameer Puri <sameer@users.noreply.github.com>"]
-edition = "2018"
+edition = "2021"
 description = "Convert raster graphics to stylish SVGs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -14,7 +14,7 @@ structopt = "0.3"
 log = "0"
 env_logger = { version = "0", default-features = false, features = ["atty", "termcolor", "humantime"] }
 uom = { version = "0.32", features = ["use_serde"] }
-ndarray = { version = "0.15", features = ["rayon"] }
+ndarray = { version = "0.15", features = ["rayon", "serde"] }
 rand = { version = "0.8", features = ["alloc"] }
 spade = "1.8"
 rustc-hash = "1.1"
