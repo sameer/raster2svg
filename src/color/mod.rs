@@ -9,6 +9,9 @@ use std::str::FromStr;
 use self::transform::{cielab_to_ciehcl, ciexyz_to_cielab, srgb_to_ciexyz, srgb_to_hsl};
 use crate::ColorModel;
 
+/// Approximate an image with a fixed palette.
+mod approx;
+
 /// Color space transformations.
 mod transform;
 

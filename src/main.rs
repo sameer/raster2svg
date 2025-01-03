@@ -4,7 +4,6 @@ use image::io::Reader as ImageReader;
 #[cfg(debug_assertions)]
 use image::{Rgb, RgbImage};
 use log::*;
-use lyon_geom::euclid::default::Vector3D;
 use ndarray::{prelude::*, SliceInfo, SliceInfoElem};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,7 +20,6 @@ use uom::si::f64::Length;
 use uom::si::length::{inch, millimeter};
 
 use crate::color::Color;
-use crate::optimize::direct::Direct;
 use crate::render::render_stipple_based;
 
 /// Adjust image color
@@ -207,17 +205,32 @@ fn main() -> io::Result<()> {
         env::set_var("RUST_LOG", "raster2svg=info")
     }
     env_logger::init();
-    let mut opt = Opt::from_args();
 
-    if let Some(config) = opt.config {
-        let mut config = serde_json::from_reader::<_, Opt>(File::open(&config)?)?;
-        config.file = opt.file.or(config.file);
-        config.out = opt.out.or(config.out);
-        config.implements.append(&mut opt.implements);
-        opt = config;
-    }
+    let ref opt @ Opt {
+        ref file,
+        config: _,
+        dots_per_inch: _,
+        ref color_model,
+        ref color_method,
+        ref style,
+        ref implements,
+        super_sample: _,
+        out: _,
+    } = {
+        let mut opt = Opt::from_args();
 
-    let image = match opt.file {
+        if let Some(config) = opt.config {
+            let mut config = serde_json::from_reader::<_, Opt>(File::open(&config)?)?;
+            config.file = opt.file.or(config.file);
+            config.out = opt.out.or(config.out);
+            config.implements.append(&mut opt.implements);
+            config
+        } else {
+            opt
+        }
+    };
+
+    let image = match file {
         Some(ref filepath) => ImageReader::open(filepath)?.decode(),
         None => {
             info!("Reading from stdin");
@@ -240,8 +253,7 @@ fn main() -> io::Result<()> {
     .unwrap()
     .reversed_axes();
 
-    let colors = opt
-        .implements
+    let palette = implements
         .iter()
         .map(|implement| {
             if let Implement::Pen { color, .. } = implement {
@@ -252,27 +264,24 @@ fn main() -> io::Result<()> {
         })
         .collect::<Vec<_>>();
 
-    let image_in_color_model = opt.color_model.convert(image.view());
-    let implements_in_color_model = colors
-        .iter()
-        .map(|c| opt.color_model.convert_single(c))
-        .collect::<Vec<_>>();
-    drop(image);
-
-    let (_, width, height) = image_in_color_model.dim();
-
-    let mut image_in_implements = Array3::<f64>::zeros((opt.implements.len(), width, height));
-    let implements = opt.implements.len();
-    match opt.color_method {
+    let mut image_in_implements: Array3<f64>;
+    match color_method {
         ColorMethod::Dither => {
-            if !matches!(opt.color_model, ColorModel::Rgb) {
+            let (_, width, height) = image.dim();
+            let image_in_color_model = color_model.convert(image.view());
+            let implements_in_color_model = palette
+                .iter()
+                .map(|c| color_model.convert_single(c))
+                .collect::<Vec<_>>();
+            image_in_implements = Array3::<f64>::zeros((palette.len(), width, height));
+            if !matches!(color_model, ColorModel::Rgb) {
                 warn!("Non-rgb color model + dither doesn't work well");
             }
             // Add white for background
             let colors_float = implements_in_color_model
                 .into_iter()
                 .chain(std::iter::once(
-                    opt.color_model.convert_single(&Color::from([1.; 3])),
+                    color_model.convert_single(&Color::from([1.; 3])),
                 ))
                 .collect::<Vec<_>>();
             let dithered = FloydSteinberg.dither(image_in_color_model.view(), &colors_float);
@@ -281,13 +290,13 @@ fn main() -> io::Result<()> {
             for y in 0..height {
                 for x in 0..width {
                     let k = dithered[[x, y]];
-                    if k == opt.implements.len() {
+                    if k == implements.len() {
                         #[cfg(debug_assertions)]
                         buf.put_pixel(x as u32, y as u32, Rgb([255; 3]));
                         continue;
                     }
                     #[cfg(debug_assertions)]
-                    buf.put_pixel(x as u32, y as u32, Rgb((colors[k]).into()));
+                    buf.put_pixel(x as u32, y as u32, Rgb((palette[k]).into()));
                     image_in_implements[[k, x, y]] = 1.0;
                 }
             }
@@ -296,82 +305,14 @@ fn main() -> io::Result<()> {
             buf.save("x.png").unwrap();
         }
         ColorMethod::Vector => {
-            let mut image_in_cylindrical_color_model =
-                opt.color_model.cylindrical(image_in_color_model.view());
-            let mut implements_in_cylindrical_color_model = implements_in_color_model
-                .into_iter()
-                .map(|c| opt.color_model.cylindrical_single(c))
-                .collect::<Vec<_>>();
-            drop(image_in_color_model);
-
-            let white_in_cylindrical_color_model = opt
-                .color_model
-                .cylindrical_single(opt.color_model.convert_single(&Color::from([1.; 3])));
-            image_in_cylindrical_color_model
-                .slice_mut(s![2, .., ..])
-                .mapv_inplace(|lightness| {
-                    (white_in_cylindrical_color_model[2] - lightness).max(0.)
-                });
-            implements_in_cylindrical_color_model
-                .iter_mut()
-                .for_each(|[_, _, lightness]| {
-                    *lightness = white_in_cylindrical_color_model[2] - *lightness
-                });
-
-            let implement_hue_vectors = implements_in_cylindrical_color_model
-                .into_iter()
-                .map(|[hue, magnitude, darkness]| {
-                    let (sin, cos) = hue.sin_cos();
-                    Vector3D::new(cos * magnitude, sin * magnitude, darkness)
-                })
-                .collect::<Vec<_>>();
-            // let mut cached_colors = FxHashMap::default();
-            for y in 0..height {
-                dbg!(y);
-                for x in 0..width {
-                    let desired: [f64; 3] = image_in_cylindrical_color_model
-                        .slice(s![.., x, y])
-                        .to_vec()
-                        .try_into()
-                        .unwrap();
-
-                    let direct = Direct {
-                        epsilon: 1E-4,
-                        max_evaluations: None,
-                        max_iterations: Some(100),
-                        // max_evaluations: Some(1000),
-                        // max_iterations: None,
-                        initial: Array::zeros(implement_hue_vectors.len()),
-                        bounds: Array::from_elem(implement_hue_vectors.len(), [0., 1.]),
-                        function: |param: ArrayView1<f64>| {
-                            let weighted_vector = param
-                                .iter()
-                                .zip(implement_hue_vectors.iter())
-                                .fold(Vector3D::zero(), |acc, (p, i)| acc + *i * *p);
-                            // Convert back to cylindrical model (hue, chroma, darkness)
-                            let actual = [
-                                weighted_vector.y.atan2(weighted_vector.x),
-                                weighted_vector.to_2d().length(),
-                                weighted_vector.z,
-                            ];
-                            opt.color_model.cylindrical_diff(desired, actual)
-                        },
-                    };
-
-                    let (best, _best_cost) = direct.run();
-
-                    image_in_implements
-                        .slice_mut(s![.., x, y])
-                        .assign(&best.view());
-                }
-            }
+            image_in_implements = color_model.approximate(image.view(), &palette);
         }
     }
 
     // Linearize color mapping for line drawings
-    if matches!(opt.style, Style::Tsp | Style::Mst) {
+    if matches!(style, Style::Tsp | Style::Mst) {
         image_in_implements.mapv_inplace(|v| v.powi(2));
-    } else if matches!(opt.style, Style::Triangulation | Style::Voronoi) {
+    } else if matches!(style, Style::Triangulation | Style::Voronoi) {
         image_in_implements.mapv_inplace(|v| v.powi(3));
     }
 
