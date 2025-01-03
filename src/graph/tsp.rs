@@ -5,7 +5,12 @@ use num_traits::{FromPrimitive, PrimInt, Signed};
 use rand::{distributions::Standard, prelude::Distribution, thread_rng, Rng};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::{collections::VecDeque, fmt::Debug, hash::Hash, iter::Sum};
+use std::{
+    collections::VecDeque,
+    fmt::Debug,
+    hash::{BuildHasherDefault, Hash},
+    iter::Sum,
+};
 
 #[derive(PartialEq, Eq, Debug)]
 struct Edge<T: Debug>([[T; 2]; 2]);
@@ -18,7 +23,7 @@ impl<T: PrimInt + Signed + Eq + PartialEq + PartialOrd + Ord + Debug> Edge<T> {
 
 impl<T: PrimInt + Signed + Eq + PartialEq + PartialOrd + Ord + Debug> PartialOrd for Edge<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.length().partial_cmp(&other.length())
+        Some(self.cmp(other))
     }
 }
 
@@ -81,7 +86,8 @@ fn approximate_tsp_with_mst_greedy<
     vertices: &[[T; 2]],
     tree: &[[[T; 2]; 2]],
 ) -> Vec<[T; 2]> {
-    let mut adjacency_map: Vec<HashSet<_>> = vec![HashSet::default(); vertices.len()];
+    let mut adjacency_map: Vec<HashSet<_>> =
+        vec![HashSet::with_capacity_and_hasher(1, BuildHasherDefault::default()); vertices.len()];
     {
         let vertex_to_index = vertices
             .iter()
@@ -106,15 +112,21 @@ fn approximate_tsp_with_mst_greedy<
                 .map(move |adjacency| (branch, adjacency))
         })
         .collect::<Vec<_>>();
-    branch_list.sort_by_key(|(branch, adjacency)| Edge([vertices[*branch], vertices[*adjacency]]));
+    branch_list
+        .sort_by_cached_key(|(branch, adjacency)| Edge([vertices[*branch], vertices[*adjacency]]));
 
     while let Some((branch, disconnected_node)) = branch_list.pop() {
-        dbg!(branch_list.len());
-        // No longer a branch
+        debug!(
+            "Approximation progress: {} remaining branches",
+            branch_list.len()
+        );
+        // No longer a branching vertex
         if adjacency_map[branch].len() <= 2 {
             continue;
         }
-        // Disconnected node was once a branch, already processed this pair
+        // This branching edge doesn't exist anymore.
+        // The other end is a branch that was already processed.
+        // that has already been processed.
         if !adjacency_map[branch].contains(&disconnected_node) {
             continue;
         }
@@ -123,31 +135,57 @@ fn approximate_tsp_with_mst_greedy<
         adjacency_map[branch].remove(&disconnected_node);
         adjacency_map[disconnected_node].remove(&branch);
 
-        // Now there are (in theory) two disconnected trees
-        // Find the two connected trees in the graph
-        let mut disconnected_tree_visited = BitVec::<u8, Msb0>::repeat(false, vertices.len());
-        {
-            *disconnected_tree_visited
-                .get_mut(disconnected_node)
-                .unwrap() = true;
-            let mut dfs = vec![disconnected_node];
-            while let Some(head) = dfs.pop() {
-                for adjacency in &adjacency_map[head] {
-                    if !disconnected_tree_visited[*adjacency] {
-                        *disconnected_tree_visited.get_mut(*adjacency).unwrap() = true;
-                        dfs.push(*adjacency);
+        // Now there are two disconnected trees,
+        // do a BFS to find the leaves in both.
+        let (disconnected_tree_leaves, branch_tree_leaves) = {
+            let mut disconnected_leaves = vec![];
+            let mut branch_leaves = vec![];
+
+            let mut disconnected_bfs = VecDeque::from([((disconnected_node, branch))]);
+            let mut branch_bfs = VecDeque::from([(branch, disconnected_node)]);
+            loop {
+                let it = disconnected_bfs
+                    .pop_front()
+                    .map(|state| (state, &mut disconnected_leaves, &mut disconnected_bfs))
+                    .into_iter()
+                    .chain(
+                        branch_bfs
+                            .pop_front()
+                            .map(|state| (state, &mut branch_leaves, &mut branch_bfs))
+                            .into_iter(),
+                    );
+
+                for ((head, source), leaves, bfs) in it {
+                    // Handles the first vertex
+                    if adjacency_map[head].len() <= 1 {
+                        leaves.push(head);
                     }
+                    let non_leaf_adjacencies = adjacency_map[head]
+                        .iter()
+                        .copied()
+                        // Optimization: we only need to make sure no backtracking happens since this
+                        // is a tree.
+                        .filter(|adj| *adj != source)
+                        .filter_map(|adj| {
+                            let adj_adj = &adjacency_map[adj];
+                            if adj_adj.len() <= 1 {
+                                leaves.push(adj);
+                                debug_assert_eq!(*adj_adj.iter().next().unwrap(), head);
+                                None
+                            } else {
+                                Some((adj, head))
+                            }
+                        });
+                    bfs.extend(non_leaf_adjacencies);
+                }
+
+                if disconnected_bfs.is_empty() && branch_bfs.is_empty() {
+                    break (disconnected_leaves, branch_leaves);
                 }
             }
-        }
+        };
 
-        // Find leaves in the two
         // Pick the shortest possible link between two leaves that would reconnect the trees
-
-        let (disconnected_tree_leaves, branch_tree_leaves) = (0..vertices.len())
-            .filter(|i| adjacency_map[*i].len() <= 1)
-            .partition::<Vec<_>, _>(|i| disconnected_tree_visited[*i]);
-
         let (disconnected_tree_leaf, branch_tree_leaf) = disconnected_tree_leaves
             .into_par_iter()
             .flat_map(|i| {
@@ -166,14 +204,14 @@ fn approximate_tsp_with_mst_greedy<
 
     // Extract path from the adjacency list
     let mut path = Vec::with_capacity(vertices.len());
-    if let Some((first_vertex, adjacencies)) = adjacency_map
+    let (first_vertex, adjacencies) = adjacency_map
         .iter()
         .enumerate()
         .find(|(_, adjacencies)| adjacencies.len() == 1)
-    {
-        path.push(first_vertex);
-        path.push(*adjacencies.iter().next().unwrap());
-    }
+        .expect("path always has a first vertex");
+
+    path.push(first_vertex);
+    path.push(*adjacencies.iter().next().unwrap());
 
     // The number of edges in an open loop TSP path is equal to the number of vertices - 1
     while path.len() < vertices.len() {
