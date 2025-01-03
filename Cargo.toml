@@ -23,16 +23,16 @@ log = "0"
 lyon_geom = "0"
 ndarray = { version = "0", features = ["rayon", "serde"] }
 ndarray-stats = "0"
-num-traits = "0.2"
+num-traits = "0"
 paste = "1"
 rand = { version = "0.8", features = ["alloc"] }
-rayon = "1.5"
-rustc-hash = "1.1"
+rayon = "1"
+rustc-hash = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_with = "1.12"
-spade = "1.8"
+serde_with = "1"
+spade = "1"
 uom = { version = "0", features = ["use_serde"] }
 
 [dev-dependencies]
-pretty_assertions = "1.2"
+pretty_assertions = "1"
