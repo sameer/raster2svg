@@ -385,6 +385,7 @@ pub fn step_edge_detection(
             *d_x = first_derivative_component.abs() - laplacian_of_gaussian_component.abs();
         });
 
+    #[allow(clippy::let_and_return)]
     let h = {
         // let min = *d.min().unwrap();
         // let max = *d.max().unwrap();

@@ -2,13 +2,11 @@ use crate::{color::Color, direct::Direct};
 use cairo::{Context, Matrix, SvgUnit};
 use dither::{Dither, FloydSteinberg};
 use image::io::Reader as ImageReader;
-#[cfg(debug)]
+#[cfg(debug_assertions)]
 use image::{Rgb, RgbImage};
 use log::*;
-use lyon_geom::{euclid::default::Vector3D, Angle};
+use lyon_geom::euclid::default::Vector3D;
 use ndarray::{prelude::*, SliceInfo, SliceInfoElem};
-use num_traits::{PrimInt, Signed};
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -276,24 +274,24 @@ fn main() -> io::Result<()> {
                 ))
                 .collect::<Vec<_>>();
             let dithered = FloydSteinberg.dither(image_in_color_model.view(), &colors_float);
-            #[cfg(debug)]
+            #[cfg(debug_assertions)]
             let mut buf = RgbImage::new(width as u32, height as u32);
             for y in 0..height {
                 for x in 0..width {
                     let k = dithered[[x, y]];
                     if k == opt.implements.len() {
-                        #[cfg(debug)]
+                        #[cfg(debug_assertions)]
                         buf.put_pixel(x as u32, y as u32, Rgb([255; 3]));
                         continue;
                     }
-                    #[cfg(debug)]
+                    #[cfg(debug_assertions)]
                     buf.put_pixel(x as u32, y as u32, Rgb((*colors[k]).into()));
                     image_in_implements[[k, x, y]] = 1.0;
                 }
             }
 
-            #[cfg(debug)]
-            buf.save("x.png");
+            #[cfg(debug_assertions)]
+            buf.save("x.png").unwrap();
         }
         ColorMethod::Vector => {
             let mut image_in_cylindrical_color_model =

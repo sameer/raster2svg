@@ -71,24 +71,20 @@ impl ColorModel {
                 let raw_δ_hprime = (h1_prime - h2_prime).abs();
                 let δ_hprime_precursor = if raw_δ_hprime <= 180. {
                     h2_prime - h1_prime
+                } else if h2_prime <= h1_prime {
+                    h2_prime - h1_prime + 360.
                 } else {
-                    if h2_prime <= h1_prime {
-                        h2_prime - h1_prime + 360.
-                    } else {
-                        h2_prime - h1_prime - 360.
-                    }
+                    h2_prime - h1_prime - 360.
                 };
                 let δ_hprime = 2.0
                     * (c1_prime * c2_prime).sqrt()
                     * (δ_hprime_precursor / 2.).to_radians().sin();
                 let hmid_prime = if raw_δ_hprime <= 180. {
                     (h1_prime + h2_prime) / 2.
+                } else if h1_prime + h2_prime < 360. {
+                    (h1_prime + h2_prime + 360.) / 2.
                 } else {
-                    if h1_prime + h2_prime < 360. {
-                        (h1_prime + h2_prime + 360.) / 2.
-                    } else {
-                        (h1_prime + h2_prime - 360.) / 2.
-                    }
+                    (h1_prime + h2_prime - 360.) / 2.
                 };
 
                 let t = 1. - 0.17 * (hmid_prime - 30.).to_radians().cos()
@@ -140,12 +136,12 @@ impl AsRef<[f64; 3]> for Color {
     }
 }
 
-impl Into<[u8; 3]> for Color {
-    fn into(self) -> [u8; 3] {
+impl From<Color> for [u8; 3] {
+    fn from(c: Color) -> Self {
         [
-            (self[0] * 255.).round() as u8,
-            (self[1] * 255.).round() as u8,
-            (self[2] * 255.).round() as u8,
+            (c[0] * 255.).round() as u8,
+            (c[1] * 255.).round() as u8,
+            (c[2] * 255.).round() as u8,
         ]
     }
 }

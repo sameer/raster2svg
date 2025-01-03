@@ -2,10 +2,7 @@ use std::sync::Once;
 
 use crate::{
     color::Color,
-    filter::{
-        edge_flow_estimation, edge_tangent_flow, flow_based_difference_of_gaussians,
-        step_edge_detection,
-    },
+    filter::{edge_tangent_flow, flow_based_difference_of_gaussians},
     graph::{mst, tsp},
     kbn_summation,
     voronoi::{
@@ -24,7 +21,7 @@ use spade::delaunay::IntDelaunayTriangulation;
 pub fn render_fdog_based(
     image: ArrayView2<f64>,
     _super_sample: usize,
-    instrument_diameter_in_pixels: f64,
+    _instrument_diameter_in_pixels: f64,
     _style: Style,
     ctx: &Context,
     matrix: Matrix,
@@ -127,7 +124,7 @@ pub fn render_stipple_based(
             Style::Triangulation | Style::Mst | Style::Tsp => {
                 let mut delaunay = IntDelaunayTriangulation::with_tree_locate();
                 for vertex in &voronoi_sites {
-                    delaunay.insert([vertex[0] as i64, vertex[1] as i64]);
+                    delaunay.insert([vertex[0], vertex[1]]);
                 }
 
                 if let Style::Triangulation = style {

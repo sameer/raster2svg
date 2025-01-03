@@ -141,7 +141,7 @@ fn approximate_tsp_with_mst_greedy<
             let mut disconnected_leaves = vec![];
             let mut branch_leaves = vec![];
 
-            let mut disconnected_bfs = VecDeque::from([((disconnected_node, branch))]);
+            let mut disconnected_bfs = VecDeque::from([(disconnected_node, branch)]);
             let mut branch_bfs = VecDeque::from([(branch, disconnected_node)]);
             loop {
                 let it = disconnected_bfs
