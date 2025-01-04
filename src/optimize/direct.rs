@@ -1,3 +1,9 @@
+//! DIRECT algorithm implementation
+//!
+//! <http://www2.peq.coppe.ufrj.br/Pessoal/Professores/Arge/COQ897/Naturais/DirectUserGuide.pdf>
+
+use std::collections::BinaryHeap;
+
 use ndarray::{azip, s, stack, Array1, Array2, ArrayView1, Axis};
 
 use crate::kbn_summation;
@@ -9,24 +15,46 @@ where
     pub epsilon: f64,
     pub max_evaluations: Option<usize>,
     pub max_iterations: Option<usize>,
-    pub initial: Array1<f64>,
     pub bounds: Array1<[f64; 2]>,
     pub function: F,
 }
 
-#[derive(Debug)]
+/// Hyper-rectangle as defined by the DIRECT algorithm.
+#[derive(Debug, PartialEq)]
 struct Rectangle {
-    bound_ranges: Array1<f64>,
+    /// Bounds are represented as their length, rather than the endpoints, which can be derived from the center.
+    bound_lengths: Array1<f64>,
     size: f64,
     center: Array1<f64>,
     fmin: f64,
 }
 
+impl Eq for Rectangle {}
+
+impl PartialOrd for Rectangle {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// For ergonomics, the order is reversed here instead of with a [std::cmp::Reverse] wrapper.
+impl Ord for Rectangle {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.fmin.partial_cmp(&other.fmin).unwrap().reverse()
+    }
+}
+
+/// A set of [Rectangles](Rectangle) with the same size, or area.
 #[derive(Debug)]
 struct Group {
     size: f64,
-    fmin: f64,
-    rectangles: Vec<Rectangle>,
+    rectangles: BinaryHeap<Rectangle>,
+}
+
+impl Group {
+    fn fmin(&self) -> f64 {
+        self.rectangles.peek().expect("non empty").fmin
+    }
 }
 
 impl<'a, F> Direct<F>
@@ -50,7 +78,8 @@ where
                 }
             }
 
-            let potentially_optimal = self.get_potentially_optimal(&mut rectangles_by_size, fmin);
+            let potentially_optimal =
+                self.extract_potentially_optimal(&mut rectangles_by_size, fmin);
             if potentially_optimal.is_empty() {
                 break;
             }
@@ -67,6 +96,7 @@ where
         (self.denormalize_point(xmin), fmin)
     }
 
+    /// Initialize data structures following Section 3.2
     fn initialize(
         &self,
         rectangles_by_size: &mut Vec<Group>,
@@ -74,13 +104,13 @@ where
     ) -> (Array1<f64>, f64) {
         let dimensions = self.bounds.len();
         let center = Array1::from_elem(dimensions, 0.5);
-        let bound_ranges = Array1::ones(dimensions);
+        let bound_lengths = Array1::ones(dimensions);
 
         let center_eval = (self.function)(self.denormalize_point(center.clone()).view());
         *num_evaluations += 1;
         let rectangle = Rectangle {
             center,
-            bound_ranges,
+            bound_lengths,
             size: (dimensions as f64 * 0.5_f64.powi(2)).sqrt(),
             fmin: center_eval,
         };
@@ -88,44 +118,31 @@ where
         self.split(rectangle, rectangles_by_size, num_evaluations)
     }
 
-    fn get_potentially_optimal(
+    /// Identify and extract potentially optimal rectangles.
+    fn extract_potentially_optimal(
         &self,
         rectangles_by_size: &mut Vec<Group>,
         fmin: f64,
     ) -> Vec<Rectangle> {
         let fmin_is_zero = fmin.abs() < f64::EPSILON;
 
-        let mut potentially_optimal = vec![];
+        let mut potentially_optimal_group_indices = vec![];
 
         for i in (0..rectangles_by_size.len()).rev() {
-            let Group {
-                size: group_size,
-                fmin: group_fmin,
-                ..
-            } = &rectangles_by_size[i];
+            let group = &rectangles_by_size[i];
+
+            // Lemma 3.3 (7) values
             let minimum_larger_diff = rectangles_by_size[i + 1..]
                 .iter()
-                .map(
-                    |Group {
-                         size: larger_group_size,
-                         fmin: larger_group_fmin,
-                         ..
-                     }| {
-                        (larger_group_fmin - group_fmin) / (larger_group_size - group_size)
-                    },
-                )
+                .map(|larger_group| {
+                    (larger_group.fmin() - group.fmin()) / (larger_group.size - group.size)
+                })
                 .min_by(|a, b| a.partial_cmp(b).unwrap());
             let maximum_smaller_diff = rectangles_by_size[..i]
                 .iter()
-                .map(
-                    |Group {
-                         size: smaller_group_size,
-                         fmin: smaller_group_fmin,
-                         ..
-                     }| {
-                        (group_fmin - smaller_group_fmin) / (group_size - smaller_group_size)
-                    },
-                )
+                .map(|smaller_group| {
+                    (group.fmin() - smaller_group.fmin()) / (group.size - smaller_group.size)
+                })
                 .max_by(|a, b| a.partial_cmp(b).unwrap());
 
             let is_potentially_optimal = if let Some(minimum_larger_diff) = minimum_larger_diff {
@@ -138,11 +155,11 @@ where
                 let lemma_8_or_9_satisfied = if !fmin_is_zero {
                     // Lemma 3.3 (8)
                     self.epsilon
-                        <= (fmin - group_fmin) / fmin.abs()
-                            + group_size / fmin.abs() * minimum_larger_diff
+                        <= (fmin - group.fmin()) / fmin.abs()
+                            + group.size / fmin.abs() * minimum_larger_diff
                 } else {
                     // Lemma 3.3 (9)
-                    *group_fmin <= group_size * minimum_larger_diff
+                    group.fmin() <= group.size * minimum_larger_diff
                 };
 
                 lemma_7_satisfied && lemma_8_or_9_satisfied
@@ -151,65 +168,65 @@ where
             };
 
             if is_potentially_optimal {
-                let group = &mut rectangles_by_size[i];
                 // Lemma 3.3 (6)
-                for j in (0..group.rectangles.len()).rev() {
-                    if (group.rectangles[j].fmin - group.fmin).abs() < f64::EPSILON {
-                        potentially_optimal.push(group.rectangles.remove(j));
-                    }
+                potentially_optimal_group_indices.push(i);
+            }
+        }
+
+        let mut potentially_optimal = vec![];
+        for i in potentially_optimal_group_indices {
+            let group = &mut rectangles_by_size[i];
+            let group_fmin = group.fmin();
+            while let Some(rectangle) = group.rectangles.peek() {
+                if (rectangle.fmin - group_fmin).abs() < f64::EPSILON {
+                    potentially_optimal.push(group.rectangles.pop().unwrap());
+                } else {
+                    break;
                 }
             }
         }
 
-        for i in (0..rectangles_by_size.len()).rev() {
-            let group = &mut rectangles_by_size[i];
-            if group.rectangles.is_empty() {
-                rectangles_by_size.remove(i);
-            } else {
-                group.fmin = group
-                    .rectangles
-                    .iter()
-                    .map(|r| r.fmin)
-                    .min_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap();
-            }
-        }
+        // Update data structures after extracting rectangles.
+        rectangles_by_size.retain(|g| !g.rectangles.is_empty());
 
         potentially_optimal
     }
 
+    /// Split the given [Rectangle].
     fn split(
         &self,
         rectangle: Rectangle,
         rectangles: &mut Vec<Group>,
         num_evaluations: &mut usize,
     ) -> (Array1<f64>, f64) {
-        let dimensions = rectangle.bound_ranges.len();
+        let dimensions = rectangle.bound_lengths.len();
 
-        let max_bound_range = rectangle
-            .bound_ranges
+        // Find the longest bound.
+        let longest_bound_length = rectangle
+            .bound_lengths
             .iter()
             .copied()
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap();
 
+        // Split along all bounds that are the same length as the longest bound.
         let indices = rectangle
-            .bound_ranges
+            .bound_lengths
             .indexed_iter()
-            .filter(|(_, range)| (max_bound_range - *range).abs() < f64::EPSILON)
+            .filter(|(_, len)| (longest_bound_length - *len).abs() < f64::EPSILON)
             .map(|(i, _)| i)
             .collect::<Vec<_>>();
-        // indices x dimensions
+
+        // Difference vector for each dimension being split (indices x dimensions)
         let mut δ_e = Array2::zeros((indices.len(), dimensions));
         for (i, dim) in indices.iter().enumerate() {
-            δ_e[[i, *dim]] = rectangle.bound_ranges[*dim] / 3.;
+            δ_e[[i, *dim]] = rectangle.bound_lengths[*dim] / 3.;
         }
 
-        // indices x 2 x dimensions
+        // function inputs (indices x 2 x dimensions)
         let c_δ_e = stack![Axis(1), &rectangle.center - &δ_e, &rectangle.center + &δ_e];
 
-        // evaluate f for each c +/- δ_e
-        // indices x 2
+        // evaluate function for each c +/- δ_e (indices x 2)
         let f_c_δ_e = c_δ_e.map_axis(Axis(2), |x| {
             (self.function)(self.denormalize_point(x.to_owned()).view())
         });
@@ -238,41 +255,38 @@ where
 
         // Divide starting with the dimension with the smallest (best) wj
         let mut indices_that_sort_w = (0..w_values.len()).collect::<Vec<_>>();
-        indices_that_sort_w.sort_by(|i, j| w_values[*i].partial_cmp(&w_values[*j]).unwrap());
+        indices_that_sort_w
+            .sort_unstable_by(|i, j| w_values[*i].partial_cmp(&w_values[*j]).unwrap());
 
-        // Each split divides into 3 rectangles
-        // Because we may have multiple splits, we keep prev_rectangle for splitting along subsequent wj
+        // Each split divides into 3 rectangles.
+        // Because we may have multiple splits, we keep prev_rectangle for splitting along subsequent wj.
         let mut prev_rectangle = rectangle;
-        // The size shrinks after each iteration so we only need to search below a previously found size
+        // The size shrinks after each iteration so we only need to search below a previously found size.
         let mut binary_search_upper_bound = rectangles.len();
 
         for wj_index in indices_that_sort_w {
             let dim = indices[wj_index];
-            let mut bound_ranges = prev_rectangle.bound_ranges;
-            bound_ranges[dim] /= 3.;
+            let mut bound_lengths = prev_rectangle.bound_lengths;
+            bound_lengths[dim] /= 3.;
             kbn_summation! {
-                for range in &bound_ranges => {
-                    size_squared += (range / 2.).powi(2);
+                for len in &bound_lengths => {
+                    size_squared += (len / 2.).powi(2);
                 }
             }
             let size = size_squared.sqrt();
 
-            // left, right
+            // Insert left, right
+            let left_and_right = (0..1).map(|k| Rectangle {
+                bound_lengths: bound_lengths.clone(),
+                size,
+                center: c_δ_e.slice(s![wj_index, k, ..]).to_owned(),
+                fmin: f_c_δ_e[[wj_index, k]],
+            });
             match rectangles[..binary_search_upper_bound]
                 .binary_search_by(|g| g.size.partial_cmp(&size).unwrap())
             {
                 Ok(i) => {
-                    let group = &mut rectangles[i];
-                    group.fmin = group.fmin.min(w_values[wj_index]);
-                    group.rectangles.reserve(2);
-                    for k in 0..1 {
-                        group.rectangles.push(Rectangle {
-                            bound_ranges: bound_ranges.clone(),
-                            size,
-                            center: c_δ_e.slice(s![wj_index, k, ..]).to_owned(),
-                            fmin: f_c_δ_e[[wj_index, k]],
-                        });
-                    }
+                    rectangles[i].rectangles.extend(left_and_right);
                     binary_search_upper_bound = i + 1;
                 }
                 Err(i) => {
@@ -280,51 +294,35 @@ where
                         i,
                         Group {
                             size,
-                            fmin: w_values[wj_index],
-                            rectangles: vec![
-                                Rectangle {
-                                    bound_ranges: bound_ranges.clone(),
-                                    size,
-                                    center: c_δ_e.slice(s![wj_index, 0, ..]).to_owned(),
-                                    fmin: f_c_δ_e[[wj_index, 0]],
-                                },
-                                Rectangle {
-                                    bound_ranges: bound_ranges.clone(),
-                                    size,
-                                    center: c_δ_e.slice(s![wj_index, 1, ..]).to_owned(),
-                                    fmin: f_c_δ_e[[wj_index, 1]],
-                                },
-                            ],
+                            rectangles: BinaryHeap::from_iter(left_and_right),
                         },
                     );
                     binary_search_upper_bound = i + 1;
                 }
             }
 
-            // center
+            // Keep track of center for further splitting and re-insertion.
             prev_rectangle = Rectangle {
-                bound_ranges,
+                bound_lengths,
                 size,
                 center: prev_rectangle.center,
                 fmin: prev_rectangle.fmin,
             };
         }
 
+        // Put the center rectangle back in.
         match rectangles[..binary_search_upper_bound]
             .binary_search_by(|g| g.size.partial_cmp(&prev_rectangle.size).unwrap())
         {
             Ok(i) => {
-                let group = &mut rectangles[i];
-                group.fmin = group.fmin.min(prev_rectangle.fmin);
-                group.rectangles.push(prev_rectangle);
+                rectangles[i].rectangles.push(prev_rectangle);
             }
             Err(i) => {
                 rectangles.insert(
                     i,
                     Group {
                         size: prev_rectangle.size,
-                        fmin: prev_rectangle.fmin,
-                        rectangles: vec![prev_rectangle],
+                        rectangles: BinaryHeap::from([prev_rectangle]),
                     },
                 );
             }
@@ -333,6 +331,7 @@ where
         (split_xmin, split_fmin)
     }
 
+    /// Convert a point from the hypercube range back into user range.
     fn denormalize_point(&self, mut hypercube_point: Array1<f64>) -> Array1<f64> {
         azip!(
             (x in &mut hypercube_point, bound in &self.bounds) *x = *x * (bound[1] - bound[0]) + bound[0]
@@ -346,7 +345,8 @@ mod test {
     use lyon_geom::euclid::{UnknownUnit, Vector3D};
     use ndarray::{array, azip, Array, Array1};
 
-    use crate::{direct::Direct, ColorModel};
+    use super::Direct;
+    use crate::ColorModel;
 
     #[test]
     fn test_direct() {
@@ -354,7 +354,6 @@ mod test {
             epsilon: 1e-4,
             max_evaluations: Some(1000),
             max_iterations: None,
-            initial: Array::zeros(2),
             bounds: Array::from_elem(2, [-10., 10.]),
             function: |val| val[0].powi(2) + val[1].powi(2),
         };
@@ -382,7 +381,6 @@ mod test {
             epsilon: 1e-4,
             max_evaluations: Some(1_000_000),
             max_iterations: None,
-            initial: Array::zeros(implements.len()),
             bounds: Array::from_elem(implements.len(), [0., 1.]),
             function: |param| {
                 let mut weighted_vector = Vector3D::zero();

@@ -9,28 +9,31 @@ use super::Color;
 impl ColorModel {
     pub fn approximate(self, image: ArrayView3<f64>, palette: &[Color]) -> Array3<f64> {
         let (_, width, height) = image.dim();
-        let image_in_color_model = self.convert(image);
+
+        let mut image_in_cylindrical_color_model = {
+            let image_in_color_model = self.convert(image);
+            self.cylindrical(image_in_color_model.view())
+        };
         let implements_in_color_model = palette
             .iter()
             .map(|c| self.convert_single(c))
             .collect::<Vec<_>>();
-
-        let mut image_in_cylindrical_color_model = self.cylindrical(image_in_color_model.view());
         let mut implements_in_cylindrical_color_model = implements_in_color_model
             .into_iter()
             .map(|c| self.cylindrical_single(c))
             .collect::<Vec<_>>();
-        drop(image_in_color_model);
 
         let white_in_cylindrical_color_model =
             self.cylindrical_single(self.convert_single(&Color::from([1.; 3])));
+
+        // Convert lightness into darkness and clamp it
         image_in_cylindrical_color_model
             .slice_mut(s![2, .., ..])
             .mapv_inplace(|lightness| (white_in_cylindrical_color_model[2] - lightness).max(0.));
         implements_in_cylindrical_color_model
             .iter_mut()
             .for_each(|[_, _, lightness]| {
-                *lightness = white_in_cylindrical_color_model[2] - *lightness
+                *lightness = (white_in_cylindrical_color_model[2] - *lightness).max(0.);
             });
 
         let implement_hue_vectors = implements_in_cylindrical_color_model
@@ -50,7 +53,7 @@ impl ColorModel {
                     .slice(s![.., x, y])
                     .to_vec()
                     .try_into()
-                    .unwrap();
+                    .expect("image slice is a pixel");
 
                 let direct = Direct {
                     epsilon: 1E-4,
@@ -58,7 +61,6 @@ impl ColorModel {
                     max_iterations: Some(100),
                     // max_evaluations: Some(1000),
                     // max_iterations: None,
-                    initial: Array::zeros(implement_hue_vectors.len()),
                     bounds: Array::from_elem(implement_hue_vectors.len(), [0., 1.]),
                     function: |param: ArrayView1<f64>| {
                         let weighted_vector = param
