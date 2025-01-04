@@ -17,7 +17,25 @@ where
     pub bounds: Array1<[f64; 2]>,
     pub max_evaluations: Option<usize>,
     pub max_iterations: Option<usize>,
+    /// Enables DIRECT-restart.
     pub adapt_epsilon: bool,
+    /// Enables recommended DIRECT revisions that reduce global drag.
+    pub reduce_global_drag: bool,
+    pub size_metric: SizeMetric,
+}
+
+struct DirectState {
+    epsilon: AdaptiveEpsilon,
+    iterations: usize,
+    evaluations: usize,
+    rectangles_by_size: Vec<Group>,
+    dimension_split_counters: Vec<usize>,
+    xmin: Array1<f64>,
+    fmin: f64,
+}
+
+pub enum SizeMetric {
+    Area,
 }
 
 /// Hyper-rectangle as defined by the DIRECT algorithm.
@@ -63,57 +81,56 @@ where
     F: Fn(ArrayView1<f64>) -> f64,
 {
     pub fn run(&self) -> (Array1<f64>, f64) {
-        let mut rectangles_by_size: Vec<Group> = vec![];
-        let mut epsilon = AdaptiveEpsilon::new(self.adapt_epsilon);
-        let mut num_evaluations = 0;
-        let mut num_iterations = 0;
-        let (mut xmin, mut fmin) = self.initialize(&mut rectangles_by_size, &mut num_evaluations);
+        let mut state = DirectState {
+            epsilon: AdaptiveEpsilon::new(self.adapt_epsilon),
+            iterations: 0,
+            evaluations: 0,
+            rectangles_by_size: vec![],
+            dimension_split_counters: vec![0; self.bounds.len()],
+            xmin: Array1::zeros(self.bounds.len()),
+            fmin: 0.,
+        };
+        self.initialize(&mut state);
 
         loop {
             if let Some(max_evaluations) = self.max_evaluations {
-                if num_evaluations >= max_evaluations {
+                if state.evaluations >= max_evaluations {
                     break;
                 }
             }
             if let Some(max_iterations) = self.max_iterations {
-                if num_iterations >= max_iterations {
+                if state.iterations >= max_iterations {
                     break;
                 }
             }
 
-            let potentially_optimal =
-                self.extract_potentially_optimal(&mut rectangles_by_size, fmin, &epsilon);
+            let potentially_optimal = self.extract_potentially_optimal(&mut state);
             if potentially_optimal.is_empty() {
                 break;
             }
             for rectangle in potentially_optimal {
-                let (split_xmin, split_fmin) =
-                    self.split(rectangle, &mut rectangles_by_size, &mut num_evaluations);
-                if split_fmin < fmin {
-                    xmin = split_xmin;
-                    fmin = split_fmin;
-                    epsilon.improved(num_iterations);
+                let (split_xmin, split_fmin) = self.split(rectangle, &mut state);
+                if split_fmin < state.fmin {
+                    state.xmin = split_xmin;
+                    state.fmin = split_fmin;
+                    state.epsilon.improved(state.iterations);
                 } else {
-                    epsilon.no_improvement(num_iterations);
+                    state.epsilon.no_improvement(state.iterations);
                 }
             }
-            num_iterations += 1;
+            state.iterations += 1;
         }
-        (self.denormalize_point(xmin), fmin)
+        (self.denormalize_point(state.xmin), state.fmin)
     }
 
     /// Initialize data structures following Section 3.2
-    fn initialize(
-        &self,
-        rectangles_by_size: &mut Vec<Group>,
-        num_evaluations: &mut usize,
-    ) -> (Array1<f64>, f64) {
+    fn initialize(&self, state: &mut DirectState) {
         let dimensions = self.bounds.len();
         let center = Array1::from_elem(dimensions, 0.5);
         let bound_lengths = Array1::ones(dimensions);
 
         let center_eval = (self.function)(self.denormalize_point(center.clone()).view());
-        *num_evaluations += 1;
+        state.evaluations += 1;
         let rectangle = Rectangle {
             center,
             bound_lengths,
@@ -121,15 +138,20 @@ where
             fmin: center_eval,
         };
 
-        self.split(rectangle, rectangles_by_size, num_evaluations)
+        let (xmin, fmin) = self.split(rectangle, state);
+        state.xmin = xmin;
+        state.fmin = fmin;
     }
 
     /// Identify and extract potentially optimal rectangles.
     fn extract_potentially_optimal(
         &self,
-        rectangles_by_size: &mut Vec<Group>,
-        fmin: f64,
-        epsilon: &AdaptiveEpsilon,
+        DirectState {
+            epsilon,
+            rectangles_by_size,
+            fmin,
+            ..
+        }: &mut DirectState,
     ) -> Vec<Rectangle> {
         let fmin_is_zero = fmin.abs() < f64::EPSILON;
 
@@ -162,7 +184,7 @@ where
                 let lemma_8_or_9_satisfied = if !fmin_is_zero {
                     // Lemma 3.3 (8)
                     epsilon.value()
-                        <= (fmin - group.fmin()) / fmin.abs()
+                        <= (*fmin - group.fmin()) / fmin.abs()
                             + group.size / fmin.abs() * minimum_larger_diff
                 } else {
                     // Lemma 3.3 (9)
@@ -190,6 +212,10 @@ where
                 } else {
                     break;
                 }
+
+                if self.reduce_global_drag {
+                    break;
+                }
             }
         }
 
@@ -203,26 +229,55 @@ where
     fn split(
         &self,
         rectangle: Rectangle,
-        rectangles: &mut Vec<Group>,
-        num_evaluations: &mut usize,
+        DirectState {
+            evaluations,
+            rectangles_by_size,
+            dimension_split_counters,
+            ..
+        }: &mut DirectState,
     ) -> (Array1<f64>, f64) {
         let dimensions = rectangle.bound_lengths.len();
 
-        // Find the longest bound.
-        let longest_bound_length = rectangle
-            .bound_lengths
-            .iter()
-            .copied()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
+        let indices = if self.reduce_global_drag {
+            // Pick a single longest bound, using split counts for tie-breaking.
+            let bound = rectangle
+                .bound_lengths
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by(|(i, a), (j, b)| {
+                    a.partial_cmp(b).unwrap().then(
+                        dimension_split_counters[*i]
+                            .cmp(&dimension_split_counters[*j])
+                            .reverse(),
+                    )
+                })
+                .map(|(i, _)| i)
+                .unwrap();
+            dbg!(bound);
+            vec![bound]
+        } else {
+            // Find the longest bound.
+            let longest_bound_length = rectangle
+                .bound_lengths
+                .iter()
+                .copied()
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap();
 
-        // Split along all bounds that are the same length as the longest bound.
-        let indices = rectangle
-            .bound_lengths
-            .indexed_iter()
-            .filter(|(_, len)| (longest_bound_length - *len).abs() < f64::EPSILON)
-            .map(|(i, _)| i)
-            .collect::<Vec<_>>();
+            // Split along all bounds that are the same length as the longest bound.
+            rectangle
+                .bound_lengths
+                .indexed_iter()
+                .filter(|(_, len)| (longest_bound_length - *len).abs() < f64::EPSILON)
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+
+        // Update split counters for tie-breaking in reduced global drag.
+        for i in &indices {
+            dimension_split_counters[*i] += 1;
+        }
 
         // Difference vector for each dimension being split (indices x dimensions)
         let mut δ_e = Array2::zeros((indices.len(), dimensions));
@@ -237,7 +292,7 @@ where
         let f_c_δ_e = c_δ_e.map_axis(Axis(2), |x| {
             (self.function)(self.denormalize_point(x.to_owned()).view())
         });
-        *num_evaluations += f_c_δ_e.len();
+        *evaluations += f_c_δ_e.len();
 
         let (f_c_δ_e_min_index, f_c_δ_e_min_value) = f_c_δ_e
             .indexed_iter()
@@ -270,7 +325,7 @@ where
         // Because we may have multiple splits, we keep prev_rectangle for splitting along subsequent wj.
         let mut prev_rectangle = rectangle;
         // The size shrinks after each iteration so we only need to search below a previously found size.
-        let mut binary_search_upper_bound = rectangles.len();
+        let mut binary_search_upper_bound = rectangles_by_size.len();
 
         for wj_index in indices_that_sort_w {
             let dim = indices[wj_index];
@@ -290,15 +345,15 @@ where
                 center: c_δ_e.slice(s![wj_index, k, ..]).to_owned(),
                 fmin: f_c_δ_e[[wj_index, k]],
             });
-            match rectangles[..binary_search_upper_bound]
+            match rectangles_by_size[..binary_search_upper_bound]
                 .binary_search_by(|g| g.size.partial_cmp(&size).unwrap())
             {
                 Ok(i) => {
-                    rectangles[i].rectangles.extend(left_and_right);
+                    rectangles_by_size[i].rectangles.extend(left_and_right);
                     binary_search_upper_bound = i + 1;
                 }
                 Err(i) => {
-                    rectangles.insert(
+                    rectangles_by_size.insert(
                         i,
                         Group {
                             size,
@@ -319,14 +374,14 @@ where
         }
 
         // Put the center rectangle back in.
-        match rectangles[..binary_search_upper_bound]
+        match rectangles_by_size[..binary_search_upper_bound]
             .binary_search_by(|g| g.size.partial_cmp(&prev_rectangle.size).unwrap())
         {
             Ok(i) => {
-                rectangles[i].rectangles.push(prev_rectangle);
+                rectangles_by_size[i].rectangles.push(prev_rectangle);
             }
             Err(i) => {
-                rectangles.insert(
+                rectangles_by_size.insert(
                     i,
                     Group {
                         size: prev_rectangle.size,
@@ -370,7 +425,7 @@ impl AdaptiveEpsilon {
         } else {
             match self.prefer_locality {
                 true => 0.,
-                false => 0.01,
+                false => 1E-2,
             }
         }
     }
@@ -398,16 +453,18 @@ mod test {
     use ndarray::{array, azip, Array, Array1};
 
     use super::Direct;
-    use crate::ColorModel;
+    use crate::{optimize::direct::SizeMetric, ColorModel};
 
     #[test]
     fn test_direct() {
         let direct = Direct {
-            adapt_epsilon: true,
+            function: |val| val[0].powi(2) + val[1].powi(2),
+            bounds: Array::from_elem(2, [-10., 10.]),
             max_evaluations: Some(1000),
             max_iterations: None,
-            bounds: Array::from_elem(2, [-10., 10.]),
-            function: |val| val[0].powi(2) + val[1].powi(2),
+            adapt_epsilon: false,
+            reduce_global_drag: false,
+            size_metric: SizeMetric::Area,
         };
         assert_eq!(direct.run().1, 0.);
     }
@@ -430,10 +487,6 @@ mod test {
         // hue, chroma, darkness
         let desired = [1.4826900028611403, 5.177699004088122, 0.27727267822882595];
         let direct = Direct {
-            adapt_epsilon: true,
-            max_evaluations: Some(1_000_000),
-            max_iterations: None,
-            bounds: Array::from_elem(implements.len(), [0., 1.]),
             function: |param| {
                 let mut weighted_vector = Vector3D::zero();
                 azip! {
@@ -449,6 +502,12 @@ mod test {
                 ];
                 ColorModel::Cielab.cylindrical_diff(desired, actual)
             },
+            bounds: Array::from_elem(implements.len(), [0., 1.]),
+            max_evaluations: Some(5_000),
+            max_iterations: None,
+            adapt_epsilon: false,
+            reduce_global_drag: false,
+            size_metric: SizeMetric::Area,
         };
         let (res, cost) = direct.run();
         let weighted_vector = implements

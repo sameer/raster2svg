@@ -2,7 +2,10 @@ use lyon_geom::euclid::default::Vector3D;
 use ndarray::{s, Array, Array3, ArrayView1, ArrayView3};
 use tracing::debug;
 
-use crate::{optimize::direct::Direct, ColorModel};
+use crate::{
+    optimize::direct::{Direct, SizeMetric},
+    ColorModel,
+};
 
 use super::Color;
 
@@ -74,7 +77,9 @@ impl ColorModel {
                     max_iterations: Some(100),
                     // max_evaluations: Some(1000),
                     // max_iterations: None,
-                    adapt_epsilon: true,
+                    adapt_epsilon: false,
+                    reduce_global_drag: false,
+                    size_metric: SizeMetric::Area,
                 };
 
                 let (best, _best_cost) = direct.run();
