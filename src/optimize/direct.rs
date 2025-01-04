@@ -24,6 +24,7 @@ where
     pub size_metric: SizeMetric,
 }
 
+#[derive(Debug)]
 struct DirectState {
     epsilon: AdaptiveEpsilon,
     iterations: usize,
@@ -157,22 +158,20 @@ where
 
         let mut potentially_optimal_group_indices = vec![];
 
-        for i in (0..rectangles_by_size.len()).rev() {
-            let group = &rectangles_by_size[i];
-
+        for (j, group) in rectangles_by_size.iter().enumerate() {
             // Lemma 3.3 (7) values
-            let minimum_larger_diff = rectangles_by_size[i + 1..]
-                .iter()
-                .map(|larger_group| {
-                    (larger_group.fmin() - group.fmin()) / (larger_group.size - group.size)
-                })
-                .min_by(|a, b| a.partial_cmp(b).unwrap());
-            let maximum_smaller_diff = rectangles_by_size[..i]
+            let maximum_smaller_diff = rectangles_by_size[..j]
                 .iter()
                 .map(|smaller_group| {
                     (group.fmin() - smaller_group.fmin()) / (group.size - smaller_group.size)
                 })
                 .max_by(|a, b| a.partial_cmp(b).unwrap());
+            let minimum_larger_diff = rectangles_by_size[j + 1..]
+                .iter()
+                .map(|larger_group| {
+                    (larger_group.fmin() - group.fmin()) / (larger_group.size - group.size)
+                })
+                .min_by(|a, b| a.partial_cmp(b).unwrap());
 
             let is_potentially_optimal = if let Some(minimum_larger_diff) = minimum_larger_diff {
                 // Lemma 3.3 (7)
@@ -197,8 +196,9 @@ where
             };
 
             if is_potentially_optimal {
+                // dbg!(group.size, minimum_larger_diff, maximum_smaller_diff);
                 // Lemma 3.3 (6)
-                potentially_optimal_group_indices.push(i);
+                potentially_optimal_group_indices.push(j);
             }
         }
 
@@ -254,7 +254,6 @@ where
                 })
                 .map(|(i, _)| i)
                 .unwrap();
-            dbg!(bound);
             vec![bound]
         } else {
             // Find the longest bound.
@@ -404,6 +403,7 @@ where
 }
 
 /// DIRECT-restart
+#[derive(Debug)]
 struct AdaptiveEpsilon {
     enabled: bool,
     prefer_locality: bool,
@@ -449,8 +449,8 @@ impl AdaptiveEpsilon {
 
 #[cfg(test)]
 mod test {
-    use lyon_geom::euclid::{UnknownUnit, Vector3D};
-    use ndarray::{array, azip, Array, Array1};
+    use lyon_geom::euclid::default::Vector3D;
+    use ndarray::Array;
 
     use super::Direct;
     use crate::{optimize::direct::SizeMetric, ColorModel};
@@ -472,7 +472,7 @@ mod test {
     #[test]
     fn test_direct_real() {
         // abL
-        let implements: Array1<Vector3D<f64, UnknownUnit>> = array![
+        let implements: Vec<Vector3D<f64>> = vec![
             Vector3D::from((-12.33001605954215, -45.54515542156117, 44.2098529479848)),
             Vector3D::from((27.880276413952384, -45.45097702564241, 79.59139231597462)),
             Vector3D::from((0.0, 0.0, 100.0)),
@@ -484,26 +484,13 @@ mod test {
             Vector3D::from((-35.98529688090144, 11.606079999533165, 51.30132332650257)),
             Vector3D::from((62.596792812655295, 33.336563699816914, 55.46042775958594)),
         ];
+        let model = ColorModel::Cielab;
         // hue, chroma, darkness
         let desired = [1.4826900028611403, 5.177699004088122, 0.27727267822882595];
         let direct = Direct {
-            function: |param| {
-                let mut weighted_vector = Vector3D::zero();
-                azip! {
-                    (p in &param, i in &implements) {
-                        weighted_vector += *i * *p;
-                    }
-                }
-                // Convert back to cylindrical model (hue, chroma, darkness)
-                let actual = [
-                    weighted_vector.y.atan2(weighted_vector.x),
-                    weighted_vector.to_2d().length(),
-                    weighted_vector.z,
-                ];
-                ColorModel::Cielab.cylindrical_diff(desired, actual)
-            },
+            function: model.objective_function(desired, &implements),
             bounds: Array::from_elem(implements.len(), [0., 1.]),
-            max_evaluations: Some(5_000),
+            max_evaluations: Some(3_000),
             max_iterations: None,
             adapt_epsilon: false,
             reduce_global_drag: false,
@@ -514,19 +501,14 @@ mod test {
             .iter()
             .zip(res.iter())
             .map(|(p, x)| *p * *x)
-            .sum::<Vector3D<f64, _>>();
+            .sum::<Vector3D<f64>>();
         // Convert back to cylindrical model (hue, chroma, darkness)
         let actual = [
             weighted_vector.y.atan2(weighted_vector.x),
             weighted_vector.to_2d().length(),
             weighted_vector.z,
         ];
-        dbg!(
-            cost,
-            &res,
-            &actual,
-            ColorModel::Cielab.cylindrical_diff(desired, actual)
-        );
+        dbg!(cost, &res, &actual, model.cylindrical_diff(desired, actual));
         assert!(cost <= 4.0, "ciede2000 less than 4");
     }
 }

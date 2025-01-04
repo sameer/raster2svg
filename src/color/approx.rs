@@ -3,6 +3,7 @@ use ndarray::{s, Array, Array3, ArrayView1, ArrayView3};
 use tracing::debug;
 
 use crate::{
+    kbn_summation,
     optimize::direct::{Direct, SizeMetric},
     ColorModel,
 };
@@ -59,19 +60,7 @@ impl ColorModel {
                     .expect("image slice is a pixel");
 
                 let direct = Direct {
-                    function: |param: ArrayView1<f64>| {
-                        let weighted_vector = param
-                            .iter()
-                            .zip(implement_hue_vectors.iter())
-                            .fold(Vector3D::zero(), |acc, (p, i)| acc + *i * *p);
-                        // Convert back to cylindrical model (hue, chroma, darkness)
-                        let actual = [
-                            weighted_vector.y.atan2(weighted_vector.x),
-                            weighted_vector.to_2d().length(),
-                            weighted_vector.z,
-                        ];
-                        self.cylindrical_diff(desired, actual)
-                    },
+                    function: self.objective_function(desired, &implement_hue_vectors),
                     bounds: Array::from_elem(implement_hue_vectors.len(), [0., 1.]),
                     max_evaluations: None,
                     max_iterations: Some(100),
@@ -91,5 +80,30 @@ impl ColorModel {
         }
 
         image_in_implements
+    }
+
+    pub fn objective_function(
+        self,
+        desired: [f64; 3],
+        implement_hue_vectors: &'_ [Vector3D<f64>],
+    ) -> impl Fn(ArrayView1<f64>) -> f64 + '_ {
+        move |param| {
+            kbn_summation! {
+                for i in 0..implement_hue_vectors.len() => {
+                    weighted_vector_x += implement_hue_vectors[i].x * param[i];
+                    weighted_vector_y += implement_hue_vectors[i].y * param[i];
+                    weighted_vector_z += implement_hue_vectors[i].z * param[i];
+                }
+            }
+            let weighted_vector =
+                Vector3D::<f64>::from([weighted_vector_x, weighted_vector_y, weighted_vector_z]);
+            // Convert back to cylindrical model (hue, chroma, darkness)
+            let actual = [
+                weighted_vector.y.atan2(weighted_vector.x),
+                weighted_vector.to_2d().length(),
+                weighted_vector.z,
+            ];
+            ColorModel::Cielab.cylindrical_diff(desired, actual)
+        }
     }
 }
