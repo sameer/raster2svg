@@ -56,12 +56,6 @@ impl ColorModel {
                     .expect("image slice is a pixel");
 
                 let direct = Direct {
-                    epsilon: 1E-4,
-                    max_evaluations: None,
-                    max_iterations: Some(100),
-                    // max_evaluations: Some(1000),
-                    // max_iterations: None,
-                    bounds: Array::from_elem(implement_hue_vectors.len(), [0., 1.]),
                     function: |param: ArrayView1<f64>| {
                         let weighted_vector = param
                             .iter()
@@ -75,6 +69,12 @@ impl ColorModel {
                         ];
                         self.cylindrical_diff(desired, actual)
                     },
+                    bounds: Array::from_elem(implement_hue_vectors.len(), [0., 1.]),
+                    max_evaluations: None,
+                    max_iterations: Some(100),
+                    // max_evaluations: Some(1000),
+                    // max_iterations: None,
+                    adapt_epsilon: true,
                 };
 
                 let (best, _best_cost) = direct.run();

@@ -1,6 +1,7 @@
-//! DIRECT algorithm implementation
+//! DIRECT algorithm implementation, with added improvements.
 //!
 //! <http://www2.peq.coppe.ufrj.br/Pessoal/Professores/Arge/COQ897/Naturais/DirectUserGuide.pdf>
+//! <https://public.websites.umich.edu/~mdolaboratory/pdf/Jones2020a.pdf>
 
 use std::collections::BinaryHeap;
 
@@ -12,11 +13,11 @@ pub struct Direct<F>
 where
     F: Fn(ArrayView1<f64>) -> f64,
 {
-    pub epsilon: f64,
+    pub function: F,
+    pub bounds: Array1<[f64; 2]>,
     pub max_evaluations: Option<usize>,
     pub max_iterations: Option<usize>,
-    pub bounds: Array1<[f64; 2]>,
-    pub function: F,
+    pub adapt_epsilon: bool,
 }
 
 /// Hyper-rectangle as defined by the DIRECT algorithm.
@@ -57,15 +58,17 @@ impl Group {
     }
 }
 
-impl<'a, F> Direct<F>
+impl<F> Direct<F>
 where
-    F: Fn(ArrayView1<f64>) -> f64 + 'a,
+    F: Fn(ArrayView1<f64>) -> f64,
 {
     pub fn run(&self) -> (Array1<f64>, f64) {
         let mut rectangles_by_size: Vec<Group> = vec![];
+        let mut epsilon = AdaptiveEpsilon::new(self.adapt_epsilon);
         let mut num_evaluations = 0;
         let mut num_iterations = 0;
         let (mut xmin, mut fmin) = self.initialize(&mut rectangles_by_size, &mut num_evaluations);
+
         loop {
             if let Some(max_evaluations) = self.max_evaluations {
                 if num_evaluations >= max_evaluations {
@@ -79,7 +82,7 @@ where
             }
 
             let potentially_optimal =
-                self.extract_potentially_optimal(&mut rectangles_by_size, fmin);
+                self.extract_potentially_optimal(&mut rectangles_by_size, fmin, &epsilon);
             if potentially_optimal.is_empty() {
                 break;
             }
@@ -89,6 +92,9 @@ where
                 if split_fmin < fmin {
                     xmin = split_xmin;
                     fmin = split_fmin;
+                    epsilon.improved(num_iterations);
+                } else {
+                    epsilon.no_improvement(num_iterations);
                 }
             }
             num_iterations += 1;
@@ -123,6 +129,7 @@ where
         &self,
         rectangles_by_size: &mut Vec<Group>,
         fmin: f64,
+        epsilon: &AdaptiveEpsilon,
     ) -> Vec<Rectangle> {
         let fmin_is_zero = fmin.abs() < f64::EPSILON;
 
@@ -154,7 +161,7 @@ where
                 };
                 let lemma_8_or_9_satisfied = if !fmin_is_zero {
                     // Lemma 3.3 (8)
-                    self.epsilon
+                    epsilon.value()
                         <= (fmin - group.fmin()) / fmin.abs()
                             + group.size / fmin.abs() * minimum_larger_diff
                 } else {
@@ -236,6 +243,7 @@ where
             .indexed_iter()
             .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .unwrap();
+        // The minimum function evaluation found during this split
         let (split_xmin, split_fmin) = if *f_c_δ_e_min_value < rectangle.fmin {
             (
                 c_δ_e
@@ -340,6 +348,50 @@ where
     }
 }
 
+/// DIRECT-restart
+struct AdaptiveEpsilon {
+    enabled: bool,
+    prefer_locality: bool,
+    last_improved_iteration: usize,
+}
+
+impl AdaptiveEpsilon {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            prefer_locality: true,
+            last_improved_iteration: 0,
+        }
+    }
+
+    fn value(&self) -> f64 {
+        if !self.enabled {
+            1E-4
+        } else {
+            match self.prefer_locality {
+                true => 0.,
+                false => 0.01,
+            }
+        }
+    }
+
+    fn improved(&mut self, iteration: usize) {
+        self.last_improved_iteration = iteration;
+        self.prefer_locality = true;
+    }
+
+    fn no_improvement(&mut self, iteration: usize) {
+        let num_consecutive_before_action = match self.prefer_locality {
+            true => 5,
+            false => 50,
+        };
+
+        if iteration - self.last_improved_iteration >= num_consecutive_before_action {
+            self.prefer_locality = !self.prefer_locality;
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use lyon_geom::euclid::{UnknownUnit, Vector3D};
@@ -351,7 +403,7 @@ mod test {
     #[test]
     fn test_direct() {
         let direct = Direct {
-            epsilon: 1e-4,
+            adapt_epsilon: true,
             max_evaluations: Some(1000),
             max_iterations: None,
             bounds: Array::from_elem(2, [-10., 10.]),
@@ -378,7 +430,7 @@ mod test {
         // hue, chroma, darkness
         let desired = [1.4826900028611403, 5.177699004088122, 0.27727267822882595];
         let direct = Direct {
-            epsilon: 1e-4,
+            adapt_epsilon: true,
             max_evaluations: Some(1_000_000),
             max_iterations: None,
             bounds: Array::from_elem(implements.len(), [0., 1.]),
