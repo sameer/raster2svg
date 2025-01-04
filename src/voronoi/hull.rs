@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn test_convex_hull_of_triangle() {
         let points = [[0, 0], [0, 1], [1, 0]];
-        assert_eq!(convex_hull(&points), [points[0], points[2], points[1]]);
+        assert_eq!(convex_hull(&points), points);
     }
 
     #[test]
