@@ -10,7 +10,8 @@ use tracing::info;
 
 use crate::{get_slice_info_for_offset, kbn_summation, math::abs_distance_squared};
 
-mod hull;
+/// Convex Hull
+pub mod hull;
 
 /// An arbitrary Voronoi site with up to N dimensions.
 pub trait Site<const N: usize, T: PrimInt + FromPrimitive + Debug> {
