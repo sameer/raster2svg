@@ -2,11 +2,7 @@ use lyon_geom::euclid::default::Vector3D;
 use ndarray::{s, Array, Array3, ArrayView1, ArrayView3};
 use tracing::debug;
 
-use crate::{
-    kbn_summation,
-    optimize::direct::{Direct, SizeMetric},
-    ColorModel,
-};
+use crate::{kbn_summation, optimize::adc_direct::AdcDirect, ColorModel};
 
 use super::Color;
 
@@ -59,16 +55,13 @@ impl ColorModel {
                     .try_into()
                     .expect("image slice is a pixel");
 
-                let direct = Direct {
+                let direct = AdcDirect {
                     function: self.objective_function(desired, &implement_hue_vectors),
                     bounds: Array::from_elem(implement_hue_vectors.len(), [0., 1.]),
-                    max_evaluations: None,
-                    max_iterations: Some(100),
-                    // max_evaluations: Some(1000),
-                    // max_iterations: None,
-                    adapt_epsilon: false,
-                    reduce_global_drag: false,
-                    size_metric: SizeMetric::Area,
+                    // max_evaluations: None,
+                    // max_iterations: Some(100),
+                    max_evaluations: Some(10_000),
+                    max_iterations: None,
                 };
 
                 let (best, _best_cost) = direct.run();

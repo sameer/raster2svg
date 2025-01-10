@@ -17,6 +17,7 @@ image = { version = "0", features = ["jpeg", "png", "tiff", "bmp"] }
 lyon_geom = "0"
 ndarray = { version = "0", features = ["rayon", "serde"] }
 ndarray-stats = "0"
+num-rational = { version = "0.4", default-features = false, features = ["std"] }
 num-traits = "0"
 paste = "1"
 rand = { version = "0.8", features = ["alloc"] }

@@ -6,8 +6,8 @@
 use std::collections::BinaryHeap;
 
 use ndarray::{azip, s, stack, Array1, Array2, ArrayView1, Axis};
-
-use crate::kbn_summation;
+use num_rational::Rational64;
+use num_traits::ToPrimitive;
 
 pub struct Direct<F>
 where
@@ -21,6 +21,7 @@ where
     pub adapt_epsilon: bool,
     /// Enables recommended DIRECT revisions that reduce global drag.
     pub reduce_global_drag: bool,
+    /// Controls how DIRECT groups rectangles
     pub size_metric: SizeMetric,
 }
 
@@ -31,21 +32,26 @@ struct DirectState {
     evaluations: usize,
     rectangles_by_size: Vec<Group>,
     dimension_split_counters: Vec<usize>,
-    xmin: Array1<f64>,
+    xmin: Array1<Rational64>,
     fmin: f64,
 }
 
 pub enum SizeMetric {
-    Area,
+    /// Taxicab
+    L1,
+    /// Euclidean
+    L2,
+    /// Largest dimension
+    Linf,
 }
 
 /// Hyper-rectangle as defined by the DIRECT algorithm.
 #[derive(Debug, PartialEq)]
 struct Rectangle {
     /// Bounds are represented as their length, rather than the endpoints, which can be derived from the center.
-    bound_lengths: Array1<f64>,
-    size: f64,
-    center: Array1<f64>,
+    bound_lengths: Array1<Rational64>,
+    size: Rational64,
+    center: Array1<Rational64>,
     fmin: f64,
 }
 
@@ -67,7 +73,7 @@ impl Ord for Rectangle {
 /// A set of [Rectangles](Rectangle) with the same size, or area.
 #[derive(Debug)]
 struct Group {
-    size: f64,
+    size: Rational64,
     rectangles: BinaryHeap<Rectangle>,
 }
 
@@ -121,21 +127,25 @@ where
             }
             state.iterations += 1;
         }
-        (self.denormalize_point(state.xmin), state.fmin)
+        (self.denormalize_point(state.xmin.view()), state.fmin)
     }
 
     /// Initialize data structures following Section 3.2
     fn initialize(&self, state: &mut DirectState) {
         let dimensions = self.bounds.len();
-        let center = Array1::from_elem(dimensions, 0.5);
+        let center = Array1::from_elem(dimensions, Rational64::new_raw(1, 2));
         let bound_lengths = Array1::ones(dimensions);
 
-        let center_eval = (self.function)(self.denormalize_point(center.clone()).view());
+        let center_eval = (self.function)(self.denormalize_point(center.view()).view());
         state.evaluations += 1;
         let rectangle = Rectangle {
             center,
             bound_lengths,
-            size: (dimensions as f64 * 0.5_f64.powi(2)).sqrt(),
+            size: match self.size_metric {
+                SizeMetric::L1 => Rational64::new_raw(dimensions as i64, 1),
+                SizeMetric::L2 => Rational64::new_raw(1, 2).pow(2) * dimensions as i64,
+                SizeMetric::Linf => Rational64::ONE,
+            },
             fmin: center_eval,
         };
 
@@ -163,13 +173,15 @@ where
             let maximum_smaller_diff = rectangles_by_size[..j]
                 .iter()
                 .map(|smaller_group| {
-                    (group.fmin() - smaller_group.fmin()) / (group.size - smaller_group.size)
+                    (group.fmin() - smaller_group.fmin())
+                        / (group.size - smaller_group.size).to_f64().unwrap()
                 })
                 .max_by(|a, b| a.partial_cmp(b).unwrap());
             let minimum_larger_diff = rectangles_by_size[j + 1..]
                 .iter()
                 .map(|larger_group| {
-                    (larger_group.fmin() - group.fmin()) / (larger_group.size - group.size)
+                    (larger_group.fmin() - group.fmin())
+                        / (larger_group.size - group.size).to_f64().unwrap()
                 })
                 .min_by(|a, b| a.partial_cmp(b).unwrap());
 
@@ -184,10 +196,10 @@ where
                     // Lemma 3.3 (8)
                     epsilon.value()
                         <= (*fmin - group.fmin()) / fmin.abs()
-                            + group.size / fmin.abs() * minimum_larger_diff
+                            + group.size.to_f64().unwrap() / fmin.abs() * minimum_larger_diff
                 } else {
                     // Lemma 3.3 (9)
-                    group.fmin() <= group.size * minimum_larger_diff
+                    group.fmin() <= group.size.to_f64().unwrap() * minimum_larger_diff
                 };
 
                 lemma_7_satisfied && lemma_8_or_9_satisfied
@@ -235,7 +247,7 @@ where
             dimension_split_counters,
             ..
         }: &mut DirectState,
-    ) -> (Array1<f64>, f64) {
+    ) -> (Array1<Rational64>, f64) {
         let dimensions = rectangle.bound_lengths.len();
 
         let indices = if self.reduce_global_drag {
@@ -257,18 +269,13 @@ where
             vec![bound]
         } else {
             // Find the longest bound.
-            let longest_bound_length = rectangle
-                .bound_lengths
-                .iter()
-                .copied()
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
-                .unwrap();
+            let longest_bound_length = rectangle.bound_lengths.iter().copied().max().unwrap();
 
             // Split along all bounds that are the same length as the longest bound.
             rectangle
                 .bound_lengths
                 .indexed_iter()
-                .filter(|(_, len)| (longest_bound_length - *len).abs() < f64::EPSILON)
+                .filter(|(_, len)| **len == longest_bound_length)
                 .map(|(i, _)| i)
                 .collect::<Vec<_>>()
         };
@@ -281,7 +288,7 @@ where
         // Difference vector for each dimension being split (indices x dimensions)
         let mut δ_e = Array2::zeros((indices.len(), dimensions));
         for (i, dim) in indices.iter().enumerate() {
-            δ_e[[i, *dim]] = rectangle.bound_lengths[*dim] / 3.;
+            δ_e[[i, *dim]] = rectangle.bound_lengths[*dim] / 3;
         }
 
         // function inputs (indices x 2 x dimensions)
@@ -289,7 +296,7 @@ where
 
         // evaluate function for each c +/- δ_e (indices x 2)
         let f_c_δ_e = c_δ_e.map_axis(Axis(2), |x| {
-            (self.function)(self.denormalize_point(x.to_owned()).view())
+            (self.function)(self.denormalize_point(x).view())
         });
         *evaluations += f_c_δ_e.len();
 
@@ -329,13 +336,16 @@ where
         for wj_index in indices_that_sort_w {
             let dim = indices[wj_index];
             let mut bound_lengths = prev_rectangle.bound_lengths;
-            bound_lengths[dim] /= 3.;
-            kbn_summation! {
-                for len in &bound_lengths => {
-                    size_squared += (len / 2.).powi(2);
+            bound_lengths[dim] /= 3;
+            // Note: SQRT not necessary
+            let mut size = Rational64::ZERO;
+            for len in &bound_lengths {
+                match self.size_metric {
+                    SizeMetric::L2 => size += (len / 2).pow(2),
+                    SizeMetric::L1 => size += len,
+                    SizeMetric::Linf => size = size.max(*len),
                 }
             }
-            let size = size_squared.sqrt();
 
             // Insert left, right
             let left_and_right = (0..1).map(|k| Rectangle {
@@ -345,7 +355,7 @@ where
                 fmin: f_c_δ_e[[wj_index, k]],
             });
             match rectangles_by_size[..binary_search_upper_bound]
-                .binary_search_by(|g| g.size.partial_cmp(&size).unwrap())
+                .binary_search_by(|g| g.size.cmp(&size))
             {
                 Ok(i) => {
                     rectangles_by_size[i].rectangles.extend(left_and_right);
@@ -374,7 +384,7 @@ where
 
         // Put the center rectangle back in.
         match rectangles_by_size[..binary_search_upper_bound]
-            .binary_search_by(|g| g.size.partial_cmp(&prev_rectangle.size).unwrap())
+            .binary_search_by(|g| g.size.cmp(&prev_rectangle.size))
         {
             Ok(i) => {
                 rectangles_by_size[i].rectangles.push(prev_rectangle);
@@ -394,11 +404,12 @@ where
     }
 
     /// Convert a point from the hypercube range back into user range.
-    fn denormalize_point(&self, mut hypercube_point: Array1<f64>) -> Array1<f64> {
+    fn denormalize_point(&self, hypercube_point: ArrayView1<Rational64>) -> Array1<f64> {
+        let mut denormalized = hypercube_point.mapv(|x| x.to_f64().unwrap());
         azip!(
-            (x in &mut hypercube_point, bound in &self.bounds) *x = *x * (bound[1] - bound[0]) + bound[0]
+            (x in &mut denormalized, bound in &self.bounds) *x = *x * (bound[1] - bound[0]) + bound[0]
         );
-        hypercube_point
+        denormalized
     }
 }
 
@@ -464,7 +475,7 @@ mod test {
             max_iterations: None,
             adapt_epsilon: false,
             reduce_global_drag: false,
-            size_metric: SizeMetric::Area,
+            size_metric: SizeMetric::L1,
         };
         assert_eq!(direct.run().1, 0.);
     }
@@ -490,11 +501,11 @@ mod test {
         let direct = Direct {
             function: model.objective_function(desired, &implements),
             bounds: Array::from_elem(implements.len(), [0., 1.]),
-            max_evaluations: Some(3_000),
+            max_evaluations: Some(10_000),
             max_iterations: None,
             adapt_epsilon: false,
             reduce_global_drag: false,
-            size_metric: SizeMetric::Area,
+            size_metric: SizeMetric::L1,
         };
         let (res, cost) = direct.run();
         let weighted_vector = implements
@@ -509,6 +520,6 @@ mod test {
             weighted_vector.z,
         ];
         dbg!(cost, &res, &actual, model.cylindrical_diff(desired, actual));
-        assert!(cost <= 4.0, "ciede2000 less than 4");
+        assert!(cost <= 3.0, "ciede2000 less than 3");
     }
 }

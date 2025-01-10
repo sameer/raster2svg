@@ -1260,6 +1260,7 @@ dependencies = [
  "lyon_geom",
  "ndarray",
  "ndarray-stats",
+ "num-rational 0.4.2",
  "num-traits",
  "paste",
  "pretty_assertions",

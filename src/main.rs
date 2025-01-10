@@ -34,7 +34,7 @@ mod graph;
 mod lsd;
 /// Pure math routines
 mod math;
-/// Optimization algorithms
+/// Constrained global optimization algorithms
 mod optimize;
 /// Routines for creating the final SVG using [Cairo](cairographics.org)
 mod render;
